@@ -34,7 +34,9 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
 
     target_channels = set(channel.casefold() for channel in config.mumble_target_channels)
     if len(target_channels) < 2:
-        raise RuntimeError("MUMBLE_TARGET_CHANNELS vaatii vähintään kaksi kanavaa.")
+        raise RuntimeError(
+            "MUMBLE_TARGET_CHANNELS vaatii vähintään kaksi kanavaa (ominaisuusvaatimus)."
+        )
 
     mumble = pymumble_py3.Mumble(
         config.mumble_host,
@@ -60,8 +62,12 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
 
         time.sleep(max(config.mumble_status_wait_seconds, 0))
 
-        channels = list(getattr(mumble, "channels", {}).values())
-        users = list(getattr(mumble, "users", {}).values())
+        channels = [
+            channel
+            for channel in getattr(mumble, "channels", {}).values()
+            if isinstance(channel, dict)
+        ]
+        users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
         own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
 
         output_channels: list[dict[str, object]] = []
@@ -73,7 +79,7 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
 
             channel_users: list[dict[str, object]] = []
             for user in users:
-                if not isinstance(user, dict) or user.get("channel_id") != channel_id:
+                if user.get("channel_id") != channel_id:
                     continue
                 if own_session is not None and user.get("session") == own_session:
                     continue
