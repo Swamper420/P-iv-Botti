@@ -52,6 +52,7 @@ class WeatherLogicTests(unittest.TestCase):
             mumble_password="secret",
             mumble_connect_timeout_seconds=10,
             mumble_status_wait_seconds=1,
+            mumble_monitor_interval_seconds=10,
         )
 
         with (
