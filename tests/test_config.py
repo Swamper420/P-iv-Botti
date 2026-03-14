@@ -29,6 +29,7 @@ class ConfigTests(unittest.TestCase):
                 "MUMBLE_PASSWORD": "status-pass",
                 "MUMBLE_CONNECT_TIMEOUT_SECONDS": "11",
                 "MUMBLE_STATUS_WAIT_SECONDS": "2",
+                "MUMBLE_MONITOR_INTERVAL_SECONDS": "10",
             },
             clear=False,
         ):
@@ -52,6 +53,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.mumble_password, "status-pass")
         self.assertEqual(config.mumble_connect_timeout_seconds, 11)
         self.assertEqual(config.mumble_status_wait_seconds, 2)
+        self.assertEqual(config.mumble_monitor_interval_seconds, 10)
 
 
 if __name__ == "__main__":

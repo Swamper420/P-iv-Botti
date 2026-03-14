@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from socket import timeout as socket_timeout
+from threading import Lock
 
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
@@ -20,6 +21,8 @@ from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_USAGE = "!mumble"
+_MONITORED_SNAPSHOT_LOCK = Lock()
+_MONITORED_SNAPSHOT: dict[str, object] | None = None
 
 
 def _resolve_requester_name(update: Update) -> str:
@@ -37,7 +40,22 @@ def _resolve_requester_name(update: Update) -> str:
     return str(user.id)
 
 
-def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, object]:
+def _store_monitored_snapshot(snapshot: dict[str, object]) -> None:
+    with _MONITORED_SNAPSHOT_LOCK:
+        global _MONITORED_SNAPSHOT
+        _MONITORED_SNAPSHOT = snapshot
+
+
+def _get_monitored_snapshot() -> dict[str, object] | None:
+    with _MONITORED_SNAPSHOT_LOCK:
+        if _MONITORED_SNAPSHOT is None:
+            return None
+        return dict(_MONITORED_SNAPSHOT)
+
+
+def _collect_mumble_snapshot(
+    config: BotConfig, requested_by: str, *, notify_channels: bool = True
+) -> dict[str, object]:
     try:
         import pymumble_py3
         from pymumble_py3.constants import (
@@ -79,26 +97,27 @@ def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, 
 
         all_channel_objects = list(getattr(mumble, "channels", {}).values())
         channels = [channel for channel in all_channel_objects if isinstance(channel, dict)]
-        channel_notice = format_mumble_channel_notice(requested_by)
-        notifiable_channels = [
-            channel
-            for channel in all_channel_objects
-            if callable(getattr(channel, "send_text_message", None))
-        ]
-        for channel in notifiable_channels:
-            try:
-                channel.send_text_message(channel_notice)
-            except Exception:
-                channel_name = "Tuntematon kanava"
-                if isinstance(channel, dict):
-                    channel_name = str(channel.get("name", channel_name))
-                else:
-                    channel_name = str(getattr(channel, "name", channel_name))
-                LOGGER.warning(
-                    "Failed to send mumble command notice to channel %r",
-                    channel_name,
-                    exc_info=True,
-                )
+        if notify_channels:
+            channel_notice = format_mumble_channel_notice(requested_by)
+            notifiable_channels = [
+                channel
+                for channel in all_channel_objects
+                if callable(getattr(channel, "send_text_message", None))
+            ]
+            for channel in notifiable_channels:
+                try:
+                    channel.send_text_message(channel_notice)
+                except Exception:
+                    channel_name = "Tuntematon kanava"
+                    if isinstance(channel, dict):
+                        channel_name = str(channel.get("name", channel_name))
+                    else:
+                        channel_name = str(getattr(channel, "name", channel_name))
+                    LOGGER.warning(
+                        "Failed to send mumble command notice to channel %r",
+                        channel_name,
+                        exc_info=True,
+                    )
 
         users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
         own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
@@ -164,16 +183,27 @@ def _build_handler(
         requested_by = _resolve_requester_name(update)
         try:
             snapshot = await asyncio.to_thread(_collect_mumble_snapshot, config, requested_by)
+            _store_monitored_snapshot(snapshot)
             reply = format_mumble_status_report(
                 server_address=str(snapshot["server_address"]),
                 channels=list(snapshot["channels"]),
             )
         except (RuntimeError, socket_timeout, TimeoutError, OSError):
             LOGGER.exception("Mumble status check failed")
-            reply = (
-                "Mumble-tilan haku epäonnistui. Varmista MUMBLE_* asetukset "
-                "(host, käyttäjä ja salasana)."
-            )
+            cached_snapshot = _get_monitored_snapshot()
+            if cached_snapshot is None:
+                reply = (
+                    "Mumble-tilan haku epäonnistui. Varmista MUMBLE_* asetukset "
+                    "(host, käyttäjä ja salasana)."
+                )
+            else:
+                reply = (
+                    "⚠️ Mumble-palvelimeen ei juuri nyt saatu yhteyttä. "
+                    "Näytetään viimeisin seurannan tallentama tila.\n\n"
+                ) + format_mumble_status_report(
+                    server_address=str(cached_snapshot["server_address"]),
+                    channels=list(cached_snapshot["channels"]),
+                )
 
         await reply_in_chunks(update, reply, config.max_reply_length)
 
@@ -181,6 +211,29 @@ def _build_handler(
 
 
 def register(application: Application, config: BotConfig) -> None:
+    job_queue = getattr(application, "job_queue", None)
+    if job_queue is not None and callable(getattr(job_queue, "run_repeating", None)):
+        interval_seconds = max(config.mumble_monitor_interval_seconds, 1)
+
+        async def _refresh_monitored_snapshot(_context: ContextTypes.DEFAULT_TYPE) -> None:
+            try:
+                snapshot = await asyncio.to_thread(
+                    _collect_mumble_snapshot,
+                    config,
+                    "taustaseuranta",
+                    notify_channels=False,
+                )
+                _store_monitored_snapshot(snapshot)
+            except (RuntimeError, socket_timeout, TimeoutError, OSError):
+                LOGGER.exception("Background mumble monitoring check failed")
+
+        job_queue.run_repeating(
+            _refresh_monitored_snapshot,
+            interval=interval_seconds,
+            first=0,
+            name="mumble-monitor-snapshot",
+        )
+
     application.add_handler(
         MessageHandler(filters.Regex(r"(?i)^\s*!?mumble\s*$"), _build_handler(config))
     )

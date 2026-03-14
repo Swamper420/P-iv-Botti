@@ -48,6 +48,7 @@ class BotConfig:
     mumble_password: str
     mumble_connect_timeout_seconds: int
     mumble_status_wait_seconds: int
+    mumble_monitor_interval_seconds: int
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -108,4 +109,7 @@ class BotConfig:
                 os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
             ),
             mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
+            mumble_monitor_interval_seconds=int(
+                os.getenv("MUMBLE_MONITOR_INTERVAL_SECONDS", "10")
+            ),
         )
