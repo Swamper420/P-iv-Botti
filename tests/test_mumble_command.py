@@ -79,12 +79,12 @@ class MumbleCommandTests(unittest.TestCase):
         self.assertEqual(app.job_queue.calls[0]["first"], 0)
         self.assertEqual(app.job_queue.calls[0]["name"], "mumble-monitor-snapshot")
 
-    def test_register_normalizes_invalid_monitor_interval(self) -> None:
+    def test_register_uses_configured_monitor_interval(self) -> None:
         app = _DummyApplication()
-        mumble.register(app, self._config(monitor_interval_seconds=0))
+        mumble.register(app, self._config(monitor_interval_seconds=7))
 
         self.assertEqual(len(app.job_queue.calls), 1)
-        self.assertEqual(app.job_queue.calls[0]["interval"], 1)
+        self.assertEqual(app.job_queue.calls[0]["interval"], 7)
 
 
 if __name__ == "__main__":

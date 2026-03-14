@@ -55,6 +55,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.mumble_status_wait_seconds, 2)
         self.assertEqual(config.mumble_monitor_interval_seconds, 10)
 
+    def test_rejects_invalid_mumble_monitor_interval(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "token",
+                "MUMBLE_MONITOR_INTERVAL_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1"
+            ):
+                BotConfig.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()

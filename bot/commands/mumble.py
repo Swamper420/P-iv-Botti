@@ -41,8 +41,8 @@ def _resolve_requester_name(update: Update) -> str:
 
 
 def _store_monitored_snapshot(snapshot: dict[str, object]) -> None:
+    global _MONITORED_SNAPSHOT
     with _MONITORED_SNAPSHOT_LOCK:
-        global _MONITORED_SNAPSHOT
         _MONITORED_SNAPSHOT = snapshot
 
 
@@ -213,9 +213,9 @@ def _build_handler(
 def register(application: Application, config: BotConfig) -> None:
     job_queue = getattr(application, "job_queue", None)
     if job_queue is not None and callable(getattr(job_queue, "run_repeating", None)):
-        interval_seconds = max(config.mumble_monitor_interval_seconds, 1)
+        interval_seconds = config.mumble_monitor_interval_seconds
 
-        async def _refresh_monitored_snapshot(_context: ContextTypes.DEFAULT_TYPE) -> None:
+        async def _refresh_monitored_snapshot(_context: object) -> None:
             try:
                 snapshot = await asyncio.to_thread(
                     _collect_mumble_snapshot,

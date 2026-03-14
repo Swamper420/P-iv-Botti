@@ -63,6 +63,11 @@ class BotConfig:
             os.getenv("STORAGE_DIR", str(project_root / "storage"))
         ).resolve()
         storage_dir.mkdir(parents=True, exist_ok=True)
+        mumble_monitor_interval_seconds = int(
+            os.getenv("MUMBLE_MONITOR_INTERVAL_SECONDS", "10")
+        )
+        if mumble_monitor_interval_seconds < 1:
+            raise ValueError("MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1")
 
         return cls(
             telegram_bot_token=token,
@@ -109,7 +114,5 @@ class BotConfig:
                 os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
             ),
             mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
-            mumble_monitor_interval_seconds=int(
-                os.getenv("MUMBLE_MONITOR_INTERVAL_SECONDS", "10")
-            ),
+            mumble_monitor_interval_seconds=mumble_monitor_interval_seconds,
         )
