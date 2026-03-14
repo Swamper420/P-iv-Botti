@@ -51,9 +51,9 @@ def _build_handler(
             return
 
         photo = InputFile(BytesIO(img_data), filename=result)
-        await message.reply_photo(photo=photo)
-        if weather_summary:
-            await reply_in_chunks(update, weather_summary, config.max_reply_length)
+
+        # Send the photo with the weather summary as the caption in a single message
+        await message.reply_photo(photo=photo, caption=weather_summary)
 
     return handle_weather
 
