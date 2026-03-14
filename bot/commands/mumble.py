@@ -22,6 +22,21 @@ LOGGER = logging.getLogger(__name__)
 COMMAND_USAGE = "!mumble"
 
 
+def _resolve_requester_name(update: Update) -> str:
+    user = update.effective_user
+    if user is None:
+        return "tuntematon käyttäjä"
+
+    if user.username:
+        return f"@{user.username}"
+
+    full_name = (user.full_name or "").strip()
+    if full_name:
+        return full_name
+
+    return str(user.id)
+
+
 def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, object]:
     try:
         import pymumble_py3
@@ -62,22 +77,26 @@ def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, 
 
         time.sleep(max(config.mumble_status_wait_seconds, 0))
 
-        channels = [
-            channel
-            for channel in getattr(mumble, "channels", {}).values()
-            if isinstance(channel, dict)
-        ]
+        all_channel_objects = list(getattr(mumble, "channels", {}).values())
+        channels = [channel for channel in all_channel_objects if isinstance(channel, dict)]
         channel_notice = format_mumble_channel_notice(requested_by)
-        for channel in channels:
-            send_text_message = getattr(channel, "send_text_message", None)
-            if not callable(send_text_message):
-                continue
+        notifiable_channels = [
+            channel
+            for channel in all_channel_objects
+            if callable(getattr(channel, "send_text_message", None))
+        ]
+        for channel in notifiable_channels:
             try:
-                send_text_message(channel_notice)
+                channel.send_text_message(channel_notice)
             except Exception:
+                channel_name = "Tuntematon kanava"
+                if isinstance(channel, dict):
+                    channel_name = str(channel.get("name", channel_name))
+                else:
+                    channel_name = str(getattr(channel, "name", channel_name))
                 LOGGER.warning(
                     "Failed to send mumble command notice to channel %r",
-                    channel.get("name", "Tuntematon kanava"),
+                    channel_name,
                     exc_info=True,
                 )
 
@@ -100,9 +119,11 @@ def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, 
                     {
                         "name": user.get("name"),
                         "online_seconds": user.get("onlinesecs"),
-                        "muted": bool(user.get("mute"))
-                        or bool(user.get("self_mute"))
-                        or bool(user.get("suppress")),
+                        "muted": (
+                            bool(user.get("mute"))
+                            or bool(user.get("self_mute"))
+                            or bool(user.get("suppress"))
+                        ),
                         "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
                     }
                 )
@@ -128,20 +149,6 @@ def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, 
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
-    def _resolve_requester_name(update: Update) -> str:
-        user = update.effective_user
-        if user is None:
-            return "tuntematon käyttäjä"
-
-        if user.username:
-            return f"@{user.username}"
-
-        full_name = user.full_name.strip()
-        if full_name:
-            return full_name
-
-        return str(user.id)
-
     async def handle_mumble(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
 

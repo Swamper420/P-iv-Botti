@@ -53,12 +53,10 @@ def format_mumble_status_report(
             online_seconds = user.get("online_seconds")
             muted = bool(user.get("muted"))
             deafened = bool(user.get("deafened"))
+            online = format_duration(online_seconds if isinstance(online_seconds, int) else None)
 
             lines.append(
-                "  - "
-                f"{name} | ⏱ {format_duration(online_seconds if isinstance(online_seconds, int) else None)}"
-                f" | mute {'kyllä' if muted else 'ei'}"
-                f" | deaf {'kyllä' if deafened else 'ei'}"
+                f"  - {name} | ⏱ {online} | mute {'kyllä' if muted else 'ei'} | deaf {'kyllä' if deafened else 'ei'}"
             )
 
     lines.insert(1, f"Kanavat: {len(channels)} | Käyttäjät: {total_users}")
