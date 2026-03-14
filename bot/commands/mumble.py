@@ -301,17 +301,33 @@ def _collect_monitored_snapshot(config: BotConfig) -> dict[str, object]:
 
     retries = max(config.mumble_connect_retries, 1)
     last_error: Exception | None = None
+    stale_existing: object | None = None
 
     with _PERSISTENT_MUMBLE_LOCK:
         existing = _PERSISTENT_MUMBLE
         if existing is not None and getattr(existing, "connected", None) == PYMUMBLE_CONN_STATE_CONNECTED:
-            return _build_snapshot_from_connected_mumble(
-                config=config,
-                mumble=existing,
-                requested_by="taustaseuranta",
-                notify_channels=False,
-                tele_messages=_drain_persistent_tele_messages(),
-            )
+            try:
+                return _build_snapshot_from_connected_mumble(
+                    config=config,
+                    mumble=existing,
+                    requested_by="taustaseuranta",
+                    notify_channels=False,
+                    tele_messages=_drain_persistent_tele_messages(),
+                )
+            except (RuntimeError, socket_timeout, TimeoutError, OSError):
+                LOGGER.exception("Existing persistent mumble connection became unusable")
+                _PERSISTENT_MUMBLE = None
+                stale_existing = existing
+
+    if stale_existing is not None:
+        try:
+            stale_existing.stop()
+        except Exception:
+            pass
+        try:
+            stale_existing.join(timeout=1)
+        except Exception:
+            pass
 
     for attempt in range(1, retries + 1):
         mumble = pymumble_py3.Mumble(
