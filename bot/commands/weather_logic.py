@@ -47,7 +47,10 @@ def _download_bytes(
 
 
 def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes | None, str]:
-    station_headers = {"Digitraffic-User": config.digitraffic_user}
+    station_headers = {
+        "Digitraffic-User": config.digitraffic_user,
+        "If-None-Match": "",
+    }
     try:
         data = _fetch_json(
             config.weathercam_stations_url,
@@ -83,7 +86,7 @@ def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes 
     image_url = f"{config.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
     image_headers = {
         "Digitraffic-User": config.digitraffic_user,
-        "Accept": "image/jpeg",
+        "If-None-Match": "",
     }
     try:
         img_data = _download_bytes(

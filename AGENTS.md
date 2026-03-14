@@ -17,3 +17,16 @@ When extending this project:
    - Fail fast with clear logs for unrecoverable setup errors.
 6. Add focused tests for new command/reply logic.
 7. Preserve Linux + systemd compatibility (`python -m bot.main` as entrypoint).
+
+## Current codebase map (keep this section updated)
+
+- Commands are implemented as module pairs in `bot/commands/`:
+  - `aih.py` + `aih_logic.py`
+  - `help.py` + `help_logic.py`
+  - `paivaa.py` + `paivaa_logic.py`
+  - `weather.py` + `weather_logic.py`
+- Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
+- Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` and environment defaults in `example.env`.
+- Targeted tests: `python -m unittest tests.test_weather_logic` (replace module with the area you changed).
+- Full regression: `python -m unittest`.
