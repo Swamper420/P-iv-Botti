@@ -92,6 +92,7 @@ class MumbleCommandTests(unittest.TestCase):
 
 class MumbleCommandAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_monitor_job_forwards_mumble_tele_messages(self) -> None:
+        mumble._drain_persistent_tele_messages()
         app = _DummyApplication()
         config = MumbleCommandTests()._config(monitor_interval_seconds=7)
         config = replace(config, mumble_tele_chat_id=-1001234)
@@ -113,6 +114,41 @@ class MumbleCommandAsyncTests(unittest.IsolatedAsyncioTestCase):
         app.bot.send_message.assert_awaited_once_with(
             chat_id=-1001234,
             text="🎧 Alice: hei telegram",
+        )
+        self.assertEqual(mumble._drain_persistent_tele_messages(), [])
+
+    async def test_monitor_job_requeues_tele_messages_on_forward_failure(self) -> None:
+        mumble._drain_persistent_tele_messages()
+        app = _DummyApplication()
+        app.bot = type(
+            "_DummyBot",
+            (),
+            {"send_message": AsyncMock(side_effect=RuntimeError("telegram send failed"))},
+        )()
+        config = MumbleCommandTests()._config(monitor_interval_seconds=7)
+        config = replace(config, mumble_tele_chat_id=-1001234)
+        mumble.register(app, config)
+
+        monitor_callback = app.job_queue.calls[0]["callback"]
+        self.assertTrue(callable(monitor_callback))
+
+        with patch(
+            "bot.commands.mumble._collect_monitored_snapshot",
+            return_value={
+                "server_address": "127.0.0.1:64738",
+                "channels": [],
+                "tele_messages": [("Alice", "eka"), ("Bob", "toka")],
+            },
+        ):
+            await monitor_callback(None)
+
+        app.bot.send_message.assert_awaited_once_with(
+            chat_id=-1001234,
+            text="🎧 Alice: eka",
+        )
+        self.assertEqual(
+            mumble._drain_persistent_tele_messages(),
+            [("Alice", "eka"), ("Bob", "toka")],
         )
 
 

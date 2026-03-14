@@ -74,6 +74,13 @@ def _drain_persistent_tele_messages() -> list[tuple[str, str]]:
         return messages
 
 
+def _requeue_persistent_tele_messages(messages: list[tuple[str, str]]) -> None:
+    if not messages:
+        return
+    with _PERSISTENT_TELE_MESSAGES_LOCK:
+        _PERSISTENT_TELE_MESSAGES[:0] = messages
+
+
 def _build_persistent_tele_message_callback(mumble: object) -> Callable[[object], None]:
     def _handle_persistent_tele_message(message: object) -> None:
         message_text = extract_mumble_tele_message(str(getattr(message, "message", "")))
@@ -301,7 +308,13 @@ def _collect_mumble_snapshot(
     raise RuntimeError("Mumble snapshot collection failed unexpectedly.")
 
 
-def _collect_monitored_snapshot(config: BotConfig) -> dict[str, object]:
+def _collect_monitored_snapshot(
+    config: BotConfig,
+    *,
+    requested_by: str = "taustaseuranta",
+    notify_channels: bool = False,
+    include_tele_messages: bool = True,
+) -> dict[str, object]:
     global _PERSISTENT_MUMBLE
 
     try:
@@ -329,9 +342,11 @@ def _collect_monitored_snapshot(config: BotConfig) -> dict[str, object]:
                 return _build_snapshot_from_connected_mumble(
                     config=config,
                     mumble=existing,
-                    requested_by="taustaseuranta",
-                    notify_channels=False,
-                    tele_messages=_drain_persistent_tele_messages(),
+                    requested_by=requested_by,
+                    notify_channels=notify_channels,
+                    tele_messages=(
+                        _drain_persistent_tele_messages() if include_tele_messages else []
+                    ),
                 )
             except (RuntimeError, socket_timeout, TimeoutError, OSError):
                 LOGGER.exception("Existing persistent mumble connection became unusable")
@@ -399,9 +414,9 @@ def _collect_monitored_snapshot(config: BotConfig) -> dict[str, object]:
             return _build_snapshot_from_connected_mumble(
                 config=config,
                 mumble=mumble,
-                requested_by="taustaseuranta",
-                notify_channels=False,
-                tele_messages=_drain_persistent_tele_messages(),
+                requested_by=requested_by,
+                notify_channels=notify_channels,
+                tele_messages=_drain_persistent_tele_messages() if include_tele_messages else [],
             )
         except (RuntimeError, socket_timeout, TimeoutError, OSError) as exc:
             last_error = exc
@@ -445,7 +460,13 @@ def _build_handler(
 
         requested_by = _resolve_requester_name(update)
         try:
-            snapshot = await asyncio.to_thread(_collect_mumble_snapshot, config, requested_by)
+            snapshot = await asyncio.to_thread(
+                _collect_monitored_snapshot,
+                config,
+                requested_by=requested_by,
+                notify_channels=True,
+                include_tele_messages=False,
+            )
             _store_monitored_snapshot(snapshot)
             reply = format_mumble_status_report(
                 server_address=str(snapshot["server_address"]),
@@ -485,7 +506,7 @@ def register(application: Application, config: BotConfig) -> None:
                 tele_chat_id = config.mumble_tele_chat_id
                 tele_messages = snapshot.get("tele_messages", [])
                 if isinstance(tele_chat_id, int) and isinstance(tele_messages, list):
-                    for tele_message in tele_messages:
+                    for index, tele_message in enumerate(tele_messages):
                         if not isinstance(tele_message, tuple) or len(tele_message) != 2:
                             continue
                         sender_name, body = tele_message
@@ -498,6 +519,17 @@ def register(application: Application, config: BotConfig) -> None:
                             )
                         except Exception:
                             LOGGER.exception("Failed to forward mumble !tele message to Telegram")
+                            _requeue_persistent_tele_messages(
+                                [
+                                    candidate
+                                    for candidate in tele_messages[index:]
+                                    if isinstance(candidate, tuple)
+                                    and len(candidate) == 2
+                                    and isinstance(candidate[0], str)
+                                    and isinstance(candidate[1], str)
+                                ]
+                            )
+                            break
             except (RuntimeError, socket_timeout, TimeoutError, OSError):
                 LOGGER.exception("Background mumble monitoring check failed")
 
