@@ -23,7 +23,7 @@ class WeatherLogicTests(unittest.TestCase):
     def test_ignores_non_command_text(self) -> None:
         self.assertEqual(parse_weather_camera_location("aih: test"), (False, None))
 
-    def test_weather_image_fetch_sends_accept_header(self) -> None:
+    def test_weather_image_fetch_sends_digitraffic_headers(self) -> None:
         location_data = {
             "features": [{"properties": {"name": "Helsinki", "presets": [{"id": "CAM123"}]}}]
         }
@@ -43,7 +43,7 @@ class WeatherLogicTests(unittest.TestCase):
         )
 
         with (
-            patch("bot.commands.weather_logic._fetch_json", return_value=location_data),
+            patch("bot.commands.weather_logic._fetch_json", return_value=location_data) as fetch,
             patch("bot.commands.weather_logic._download_bytes", return_value=b"jpg") as download,
         ):
             image, filename = get_weather_cam_data("helsinki", config)
@@ -51,8 +51,12 @@ class WeatherLogicTests(unittest.TestCase):
         self.assertEqual(image, b"jpg")
         self.assertEqual(filename, "CAM123.jpg")
         self.assertEqual(
+            fetch.call_args.kwargs["headers"],
+            {"Digitraffic-User": "telegram-bot-1.0", "If-None-Match": ""},
+        )
+        self.assertEqual(
             download.call_args.kwargs["headers"],
-            {"Digitraffic-User": "telegram-bot-1.0", "Accept": "image/jpeg"},
+            {"Digitraffic-User": "telegram-bot-1.0", "If-None-Match": ""},
         )
 
 
