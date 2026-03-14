@@ -28,8 +28,10 @@ class ConfigTests(unittest.TestCase):
                 "MUMBLE_USERNAME": "status-user",
                 "MUMBLE_PASSWORD": "status-pass",
                 "MUMBLE_CONNECT_TIMEOUT_SECONDS": "11",
+                "MUMBLE_CONNECT_RETRIES": "3",
                 "MUMBLE_STATUS_WAIT_SECONDS": "2",
                 "MUMBLE_MONITOR_INTERVAL_SECONDS": "10",
+                "MUMBLE_TELE_CHAT_ID": "-100123456789",
             },
             clear=False,
         ):
@@ -52,8 +54,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.mumble_username, "status-user")
         self.assertEqual(config.mumble_password, "status-pass")
         self.assertEqual(config.mumble_connect_timeout_seconds, 11)
+        self.assertEqual(config.mumble_connect_retries, 3)
         self.assertEqual(config.mumble_status_wait_seconds, 2)
         self.assertEqual(config.mumble_monitor_interval_seconds, 10)
+        self.assertEqual(config.mumble_tele_chat_id, -100123456789)
 
     def test_rejects_invalid_mumble_monitor_interval(self) -> None:
         with patch.dict(
@@ -67,6 +71,18 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1"
             ):
+                BotConfig.from_environment()
+
+    def test_rejects_invalid_mumble_connect_retries(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "token",
+                "MUMBLE_CONNECT_RETRIES": "0",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "MUMBLE_CONNECT_RETRIES must be >= 1"):
                 BotConfig.from_environment()
 
 

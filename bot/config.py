@@ -49,6 +49,8 @@ class BotConfig:
     mumble_connect_timeout_seconds: int
     mumble_status_wait_seconds: int
     mumble_monitor_interval_seconds: int
+    mumble_connect_retries: int = 2
+    mumble_tele_chat_id: int | None = None
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -68,6 +70,12 @@ class BotConfig:
         )
         if mumble_monitor_interval_seconds < 1:
             raise ValueError("MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1")
+        mumble_connect_retries = int(os.getenv("MUMBLE_CONNECT_RETRIES", "2"))
+        if mumble_connect_retries < 1:
+            raise ValueError("MUMBLE_CONNECT_RETRIES must be >= 1")
+
+        mumble_tele_chat_id_raw = os.getenv("MUMBLE_TELE_CHAT_ID", "").strip()
+        mumble_tele_chat_id = int(mumble_tele_chat_id_raw) if mumble_tele_chat_id_raw else None
 
         return cls(
             telegram_bot_token=token,
@@ -113,6 +121,8 @@ class BotConfig:
             mumble_connect_timeout_seconds=int(
                 os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
             ),
+            mumble_connect_retries=mumble_connect_retries,
             mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
             mumble_monitor_interval_seconds=mumble_monitor_interval_seconds,
+            mumble_tele_chat_id=mumble_tele_chat_id,
         )

@@ -13,6 +13,24 @@ def is_mumble_status_command(text: str | None) -> bool:
     return normalized in {"mumble", "!mumble"}
 
 
+def extract_mumble_tele_message(text: str | None) -> str | None:
+    if text is None:
+        return None
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    prefix = "!tele"
+    if not stripped.casefold().startswith(prefix):
+        return None
+
+    message = stripped[len(prefix):].strip()
+    if not message:
+        return None
+    return message
+
+
 def format_duration(seconds: int | None) -> str:
     if seconds is None or seconds < 0:
         return "ei saatavilla"
@@ -108,9 +126,11 @@ def format_mumble_status_report(
             muted = bool(user.get("muted"))
             deafened = bool(user.get("deafened"))
             online = format_duration(online_seconds if isinstance(online_seconds, int) else None)
+            mute_status = "🔇" if muted else "🎤"
+            deaf_status = "🙉" if deafened else "👂"
 
             lines.append(
-                f"  - {name} | ⏱ {online} | mute {'kyllä' if muted else 'ei'} | deaf {'kyllä' if deafened else 'ei'}"
+                f"  - {name} | ⏱ {online} | {mute_status} | {deaf_status}"
             )
 
     lines.insert(1, f"Kanavat: {len(channels)} | Käyttäjät: {total_users}")
