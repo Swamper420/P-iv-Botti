@@ -2,6 +2,7 @@ import unittest
 
 from bot.commands.mumble_logic import (
     build_mumble_user_tracking_key,
+    extract_mumble_tele_message,
     format_duration,
     format_mumble_channel_notice,
     format_mumble_status_report,
@@ -16,6 +17,12 @@ class MumbleLogicTests(unittest.TestCase):
         self.assertTrue(is_mumble_status_command("mumble"))
         self.assertTrue(is_mumble_status_command(" !mumble "))
         self.assertFalse(is_mumble_status_command("mumble now"))
+
+    def test_extracts_tele_message(self) -> None:
+        self.assertEqual(extract_mumble_tele_message("!tele moi"), "moi")
+        self.assertEqual(extract_mumble_tele_message(" !TELE  hello world "), "hello world")
+        self.assertIsNone(extract_mumble_tele_message("!tele"))
+        self.assertIsNone(extract_mumble_tele_message("mumble"))
 
     def test_formats_duration_hms(self) -> None:
         self.assertEqual(format_duration(3723), "01:02:03")
@@ -49,7 +56,7 @@ class MumbleLogicTests(unittest.TestCase):
         self.assertIn("Mumble (127.0.0.1:64738)", report)
         self.assertIn("Kanavat: 2 | Käyttäjät: 1", report)
         self.assertIn("• Alpha (1)", report)
-        self.assertIn("Tester | ⏱ 00:01:05 | mute kyllä | deaf ei", report)
+        self.assertIn("Tester | ⏱ 00:01:05 | 🔇 | 👂", report)
         self.assertIn("• Beta (0)", report)
         self.assertNotIn("MUMBLE_TARGET_CHANNELS", report)
         self.assertNotIn("session=", report)

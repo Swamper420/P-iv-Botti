@@ -1,5 +1,7 @@
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from telegram.ext import MessageHandler
 
@@ -33,6 +35,7 @@ class _DummyApplication:
     def __init__(self) -> None:
         self.handlers: list[MessageHandler] = []
         self.job_queue = _DummyJobQueue()
+        self.bot = type("_DummyBot", (), {"send_message": AsyncMock()})()
 
     def add_handler(self, handler: MessageHandler) -> None:
         self.handlers.append(handler)
@@ -85,6 +88,32 @@ class MumbleCommandTests(unittest.TestCase):
 
         self.assertEqual(len(app.job_queue.calls), 1)
         self.assertEqual(app.job_queue.calls[0]["interval"], 7)
+
+
+class MumbleCommandAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_monitor_job_forwards_mumble_tele_messages(self) -> None:
+        app = _DummyApplication()
+        config = MumbleCommandTests()._config(monitor_interval_seconds=7)
+        config = replace(config, mumble_tele_chat_id=-1001234)
+        mumble.register(app, config)
+
+        monitor_callback = app.job_queue.calls[0]["callback"]
+        self.assertTrue(callable(monitor_callback))
+
+        with patch(
+            "bot.commands.mumble._collect_mumble_snapshot",
+            return_value={
+                "server_address": "127.0.0.1:64738",
+                "channels": [],
+                "tele_messages": [("Alice", "hei telegram")],
+            },
+        ):
+            await monitor_callback(None)
+
+        app.bot.send_message.assert_awaited_once_with(
+            chat_id=-1001234,
+            text="🎧 Alice: hei telegram",
+        )
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 from bot.active_chats import track_active_chat
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.mumble_logic import (
+    extract_mumble_tele_message,
     format_mumble_channel_notice,
     format_mumble_status_report,
     is_mumble_status_command,
@@ -73,112 +74,160 @@ def _collect_mumble_snapshot(
     if not config.mumble_password:
         raise RuntimeError("MUMBLE_PASSWORD puuttuu.")
 
-    mumble = pymumble_py3.Mumble(
-        config.mumble_host,
-        config.mumble_username,
-        port=config.mumble_port,
-        password=config.mumble_password,
-        reconnect=False,
-    )
-    mumble.set_receive_sound(False)
-    mumble.start()
+    retries = max(config.mumble_connect_retries, 1)
+    last_error: Exception | None = None
 
-    try:
-        deadline = time.monotonic() + max(config.mumble_connect_timeout_seconds, 1)
-        while True:
-            state = getattr(mumble, "connected", None)
-            if state == PYMUMBLE_CONN_STATE_CONNECTED:
-                break
-            if state == PYMUMBLE_CONN_STATE_FAILED:
-                raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
-            if state not in {None, PYMUMBLE_CONN_STATE_NOT_CONNECTED}:
-                raise RuntimeError(f"Mumble-yhteyden tila on odottamaton: {state!r}.")
-            if time.monotonic() >= deadline:
-                raise socket_timeout("Mumble-yhteys aikakatkesi.")
-            time.sleep(0.1)
+    for attempt in range(1, retries + 1):
+        mumble = pymumble_py3.Mumble(
+            config.mumble_host,
+            config.mumble_username,
+            port=config.mumble_port,
+            password=config.mumble_password,
+            reconnect=False,
+        )
+        mumble.set_receive_sound(False)
+        mumble.start()
 
-        time.sleep(max(config.mumble_status_wait_seconds, 0))
+        try:
+            deadline = time.monotonic() + max(config.mumble_connect_timeout_seconds, 1)
+            while True:
+                state = getattr(mumble, "connected", None)
+                if state == PYMUMBLE_CONN_STATE_CONNECTED:
+                    break
+                if state == PYMUMBLE_CONN_STATE_FAILED:
+                    raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
+                if state not in {None, PYMUMBLE_CONN_STATE_NOT_CONNECTED}:
+                    raise RuntimeError(f"Mumble-yhteyden tila on odottamaton: {state!r}.")
+                if time.monotonic() >= deadline:
+                    raise socket_timeout("Mumble-yhteys aikakatkesi.")
+                time.sleep(0.1)
 
-        all_channel_objects = list(getattr(mumble, "channels", {}).values())
-        channels = [channel for channel in all_channel_objects if isinstance(channel, dict)]
-        if notify_channels:
-            channel_notice = format_mumble_channel_notice(requested_by)
-            notifiable_channels = [
-                channel
-                for channel in all_channel_objects
-                if callable(getattr(channel, "send_text_message", None))
-            ]
-            for channel in notifiable_channels:
-                try:
-                    channel.send_text_message(channel_notice)
-                except Exception:
-                    channel_name = "Tuntematon kanava"
-                    if isinstance(channel, dict):
-                        channel_name = str(channel.get("name", channel_name))
-                    else:
-                        channel_name = str(getattr(channel, "name", channel_name))
-                    LOGGER.warning(
-                        "Failed to send mumble command notice to channel %r",
-                        channel_name,
-                        exc_info=True,
-                    )
+            pending_tele_messages: list[tuple[str, str]] = []
+            if config.mumble_tele_chat_id is not None:
+                callback_manager = getattr(mumble, "callbacks", None)
+                add_callback = getattr(callback_manager, "add_callback", None)
+                if callable(add_callback):
+                    try:
+                        from pymumble_py3.constants import PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
 
-        users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
-        own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
-        now_monotonic = time.monotonic()
-        with _USER_CONNECTED_AT_LOCK:
-            update_mumble_connection_tracker(
-                users=users,
-                own_session=own_session,
-                connected_since_by_key=_USER_CONNECTED_AT,
-                now_monotonic=now_monotonic,
+                        def _handle_text_message(message: object) -> None:
+                            message_text = extract_mumble_tele_message(
+                                str(getattr(message, "message", ""))
+                            )
+                            if message_text is None:
+                                return
+
+                            actor_session = getattr(message, "actor", None)
+                            actor_name = "tuntematon"
+                            users = getattr(mumble, "users", {})
+                            if isinstance(actor_session, int) and hasattr(users, "get"):
+                                actor = users.get(actor_session)
+                                if actor is not None:
+                                    actor_name = str(actor.get("name", actor_name))
+
+                            pending_tele_messages.append((actor_name, message_text))
+
+                        add_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, _handle_text_message)
+                    except Exception:
+                        LOGGER.warning("Failed to register mumble text message callback", exc_info=True)
+
+            time.sleep(max(config.mumble_status_wait_seconds, 0))
+
+            all_channel_objects = list(getattr(mumble, "channels", {}).values())
+            channels = [channel for channel in all_channel_objects if isinstance(channel, dict)]
+            if notify_channels:
+                channel_notice = format_mumble_channel_notice(requested_by)
+                notifiable_channels = [
+                    channel
+                    for channel in all_channel_objects
+                    if callable(getattr(channel, "send_text_message", None))
+                ]
+                for channel in notifiable_channels:
+                    try:
+                        channel.send_text_message(channel_notice)
+                    except Exception:
+                        channel_name = "Tuntematon kanava"
+                        if isinstance(channel, dict):
+                            channel_name = str(channel.get("name", channel_name))
+                        else:
+                            channel_name = str(getattr(channel, "name", channel_name))
+                        LOGGER.warning(
+                            "Failed to send mumble command notice to channel %r",
+                            channel_name,
+                            exc_info=True,
+                        )
+
+            users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
+            own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
+            now_monotonic = time.monotonic()
+            with _USER_CONNECTED_AT_LOCK:
+                update_mumble_connection_tracker(
+                    users=users,
+                    own_session=own_session,
+                    connected_since_by_key=_USER_CONNECTED_AT,
+                    now_monotonic=now_monotonic,
+                )
+
+                output_channels: list[dict[str, object]] = []
+                for channel in sorted(channels, key=lambda item: str(item.get("name", "")).casefold()):
+                    channel_id = channel.get("channel_id")
+                    channel_name = str(channel.get("name", "Tuntematon kanava"))
+
+                    channel_users: list[dict[str, object]] = []
+                    for user in users:
+                        if user.get("channel_id") != channel_id:
+                            continue
+                        if own_session is not None and user.get("session") == own_session:
+                            continue
+
+                        channel_users.append(
+                            {
+                                "name": user.get("name"),
+                                "online_seconds": resolve_online_seconds(
+                                    user=user,
+                                    connected_since_by_key=_USER_CONNECTED_AT,
+                                    now_monotonic=now_monotonic,
+                                ),
+                                "muted": (
+                                    bool(user.get("mute"))
+                                    or bool(user.get("self_mute"))
+                                    or bool(user.get("suppress"))
+                                ),
+                                "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
+                            }
+                        )
+
+                    output_channels.append({"name": channel_name, "users": channel_users})
+
+            return {
+                "server_address": f"{config.mumble_host}:{config.mumble_port}",
+                "channels": output_channels,
+                "tele_messages": pending_tele_messages,
+            }
+        except (RuntimeError, socket_timeout, TimeoutError, OSError) as exc:
+            last_error = exc
+            if attempt >= retries:
+                raise
+            LOGGER.warning(
+                "Mumble snapshot attempt %s/%s failed, retrying",
+                attempt,
+                retries,
+                exc_info=True,
             )
+        finally:
+            try:
+                mumble.stop()
+            except Exception:
+                pass
 
-            output_channels: list[dict[str, object]] = []
-            for channel in sorted(channels, key=lambda item: str(item.get("name", "")).casefold()):
-                channel_id = channel.get("channel_id")
-                channel_name = str(channel.get("name", "Tuntematon kanava"))
+            try:
+                mumble.join(timeout=1)
+            except Exception:
+                pass
 
-                channel_users: list[dict[str, object]] = []
-                for user in users:
-                    if user.get("channel_id") != channel_id:
-                        continue
-                    if own_session is not None and user.get("session") == own_session:
-                        continue
-
-                    channel_users.append(
-                        {
-                            "name": user.get("name"),
-                            "online_seconds": resolve_online_seconds(
-                                user=user,
-                                connected_since_by_key=_USER_CONNECTED_AT,
-                                now_monotonic=now_monotonic,
-                            ),
-                            "muted": (
-                                bool(user.get("mute"))
-                                or bool(user.get("self_mute"))
-                                or bool(user.get("suppress"))
-                            ),
-                            "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
-                        }
-                    )
-
-                output_channels.append({"name": channel_name, "users": channel_users})
-
-        return {
-            "server_address": f"{config.mumble_host}:{config.mumble_port}",
-            "channels": output_channels,
-        }
-    finally:
-        try:
-            mumble.stop()
-        except Exception:
-            pass
-
-        try:
-            mumble.join(timeout=1)
-        except Exception:
-            pass
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Mumble snapshot collection failed unexpectedly.")
 
 
 def _build_handler(
@@ -240,6 +289,22 @@ def register(application: Application, config: BotConfig) -> None:
                     notify_channels=False,
                 )
                 _store_monitored_snapshot(snapshot)
+                tele_chat_id = config.mumble_tele_chat_id
+                tele_messages = snapshot.get("tele_messages", [])
+                if isinstance(tele_chat_id, int) and isinstance(tele_messages, list):
+                    for tele_message in tele_messages:
+                        if not isinstance(tele_message, tuple) or len(tele_message) != 2:
+                            continue
+                        sender_name, body = tele_message
+                        if not isinstance(sender_name, str) or not isinstance(body, str):
+                            continue
+                        try:
+                            await application.bot.send_message(
+                                chat_id=tele_chat_id,
+                                text=f"🎧 {sender_name}: {body}",
+                            )
+                        except Exception:
+                            LOGGER.exception("Failed to forward mumble !tele message to Telegram")
             except (RuntimeError, socket_timeout, TimeoutError, OSError):
                 LOGGER.exception("Background mumble monitoring check failed")
 
