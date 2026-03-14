@@ -36,10 +36,6 @@ class CommandRegistrationTests(unittest.TestCase):
             stt_backend_url="http://127.0.0.1:8081/transcribe",
             stt_timeout_seconds=30,
             stt_max_audio_seconds=600,
-            link_video_download_enabled=False,
-            link_video_download_timeout_seconds=120,
-            link_video_download_max_filesize_mb=50,
-            link_video_download_max_height=360,
         )
 
     def test_registers_all_command_modules_with_message_filters(self) -> None:
@@ -50,11 +46,7 @@ class CommandRegistrationTests(unittest.TestCase):
         app = _DummyApplication()
         register_commands(app, self._config())
 
-        self.assertTrue(
-            {"aih", "help", "link_video", "paivaa", "stt", "weather"}.issubset(
-                discovered_names
-            )
-        )
+        self.assertTrue({"aih", "help", "paivaa", "stt", "weather"}.issubset(discovered_names))
         self.assertEqual(len(app.handlers), expected_count)
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
         has_regex = any(isinstance(handler.filters, filters.Regex) for handler in app.handlers)
