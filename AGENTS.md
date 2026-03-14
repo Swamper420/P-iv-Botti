@@ -28,4 +28,5 @@ When extending this project:
 - Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
 - Runtime configuration is provided by `BotConfig` in `bot/config.py` and environment defaults in `example.env`.
-- Test command: `python -m unittest` (run targeted tests first, then full suite before finalizing).
+- Targeted tests: `python -m unittest tests.test_weather_logic` (replace module with the area you changed).
+- Full regression: `python -m unittest`.
