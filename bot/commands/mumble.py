@@ -125,13 +125,13 @@ def _collect_mumble_snapshot(
 
         users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
         own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
-        snapshot_time = time.monotonic()
+        now_monotonic = time.monotonic()
         with _USER_CONNECTED_AT_LOCK:
             update_mumble_connection_tracker(
                 users=users,
                 own_session=own_session,
                 connected_since_by_key=_USER_CONNECTED_AT,
-                now_monotonic=snapshot_time,
+                now_monotonic=now_monotonic,
             )
 
             output_channels: list[dict[str, object]] = []
@@ -152,7 +152,7 @@ def _collect_mumble_snapshot(
                             "online_seconds": resolve_online_seconds(
                                 user=user,
                                 connected_since_by_key=_USER_CONNECTED_AT,
-                                now_monotonic=snapshot_time,
+                                now_monotonic=now_monotonic,
                             ),
                             "muted": (
                                 bool(user.get("mute"))

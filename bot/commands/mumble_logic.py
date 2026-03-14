@@ -66,7 +66,7 @@ def update_mumble_connection_tracker(
 def resolve_online_seconds(
     *,
     user: dict[str, object],
-    connected_since_by_key: dict[str, float],
+    connected_since_by_key: dict[str, float | int],
     now_monotonic: float,
 ) -> int | None:
     tracking_key = build_mumble_user_tracking_key(user)

@@ -81,6 +81,15 @@ class MumbleLogicTests(unittest.TestCase):
         self.assertEqual(tracker["session:2"], 100.0)
         self.assertNotIn("session:100", tracker)
 
+        update_mumble_connection_tracker(
+            users=[{"session": 1, "name": "Alice"}],
+            own_session=None,
+            connected_since_by_key=tracker,
+            now_monotonic=150.0,
+        )
+        self.assertEqual(tracker["session:1"], 100.0)
+        self.assertNotIn("session:2", tracker)
+
     def test_resolves_online_seconds_from_tracker(self) -> None:
         tracker = {"session:1": 90.0}
         seconds = resolve_online_seconds(
