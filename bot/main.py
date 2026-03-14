@@ -5,6 +5,7 @@ import logging
 from telegram.ext import Application
 
 from bot.commands import register_commands
+from bot.commands.mumble import start_background_monitor, stop_background_monitor
 from bot.config import BotConfig
 from bot.cs2_rss import Cs2RssNotifier
 
@@ -24,8 +25,10 @@ def main() -> None:
 
     async def _start_background_tasks(application: Application) -> None:
         cs2_notifier.start(application)
+        await start_background_monitor(application, config)
 
     async def _stop_background_tasks(_application: Application) -> None:
+        await stop_background_monitor()
         await cs2_notifier.stop()
 
     app = (

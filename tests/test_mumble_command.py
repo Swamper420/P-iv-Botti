@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -35,6 +36,16 @@ class _DummyApplication:
     def __init__(self) -> None:
         self.handlers: list[MessageHandler] = []
         self.job_queue = _DummyJobQueue()
+        self.bot = type("_DummyBot", (), {"send_message": AsyncMock()})()
+
+    def add_handler(self, handler: MessageHandler) -> None:
+        self.handlers.append(handler)
+
+
+class _DummyApplicationNoJobQueue:
+    def __init__(self) -> None:
+        self.handlers: list[MessageHandler] = []
+        self.job_queue = None
         self.bot = type("_DummyBot", (), {"send_message": AsyncMock()})()
 
     def add_handler(self, handler: MessageHandler) -> None:
@@ -150,6 +161,65 @@ class MumbleCommandAsyncTests(unittest.IsolatedAsyncioTestCase):
             mumble._drain_persistent_tele_messages(),
             [("Alice", "eka"), ("Bob", "toka")],
         )
+
+
+class MumbleFallbackMonitorAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self) -> None:
+        await mumble.stop_background_monitor()
+
+    async def test_start_background_monitor_uses_fallback_loop_without_job_queue(self) -> None:
+        app = _DummyApplicationNoJobQueue()
+        config = MumbleCommandTests()._config(monitor_interval_seconds=60)
+
+        with patch(
+            "bot.commands.mumble._refresh_monitored_snapshot",
+            new=AsyncMock(),
+        ) as refresh_mock:
+            await mumble.start_background_monitor(app, config)
+            await asyncio.sleep(0)
+
+        refresh_mock.assert_awaited_once_with(app, config)
+
+    async def test_start_background_monitor_skips_fallback_when_job_queue_exists(self) -> None:
+        app = _DummyApplication()
+        config = MumbleCommandTests()._config(monitor_interval_seconds=60)
+
+        with patch("bot.commands.mumble.asyncio.create_task") as create_task_mock:
+            await mumble.start_background_monitor(app, config)
+
+        create_task_mock.assert_not_called()
+
+
+class MumbleConnectionStateLoggingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        mumble._reset_monitor_connection_state()
+
+    def tearDown(self) -> None:
+        mumble._reset_monitor_connection_state()
+
+    def test_logs_connection_lifecycle_with_timestamps(self) -> None:
+        with patch.object(mumble, "LOGGER") as logger_mock:
+            mumble._update_monitor_connection_state(
+                server_address="127.0.0.1:64738",
+                connected=True,
+                now_epoch=100.0,
+            )
+            mumble._update_monitor_connection_state(
+                server_address="127.0.0.1:64738",
+                connected=False,
+                now_epoch=130.0,
+            )
+            mumble._update_monitor_connection_state(
+                server_address="127.0.0.1:64738",
+                connected=True,
+                now_epoch=160.0,
+            )
+
+        self.assertEqual(logger_mock.info.call_count, 2)
+        self.assertEqual(logger_mock.warning.call_count, 1)
+        self.assertIn("connected", logger_mock.info.call_args_list[0].args[0])
+        self.assertIn("lost connection", logger_mock.warning.call_args.args[0])
+        self.assertIn("reconnected", logger_mock.info.call_args_list[1].args[0])
 
 
 if __name__ == "__main__":
