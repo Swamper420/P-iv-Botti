@@ -51,7 +51,7 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
             if state == PYMUMBLE_CONN_STATE_FAILED:
                 raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
             if state not in {None, PYMUMBLE_CONN_STATE_NOT_CONNECTED}:
-                raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
+                raise RuntimeError(f"Mumble-yhteyden tila on odottamaton: {state!r}.")
             if time.monotonic() >= deadline:
                 raise socket_timeout("Mumble-yhteys aikakatkesi.")
             time.sleep(0.1)
