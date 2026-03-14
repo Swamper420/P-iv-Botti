@@ -16,6 +16,8 @@ from bot.commands.mumble_logic import (
     format_mumble_channel_notice,
     format_mumble_status_report,
     is_mumble_status_command,
+    resolve_online_seconds,
+    update_mumble_connection_tracker,
 )
 from bot.config import BotConfig
 
@@ -23,6 +25,8 @@ LOGGER = logging.getLogger(__name__)
 COMMAND_USAGE = "!mumble"
 _MONITORED_SNAPSHOT_LOCK = Lock()
 _MONITORED_SNAPSHOT: dict[str, object] | None = None
+_USER_CONNECTED_AT_LOCK = Lock()
+_USER_CONNECTED_AT: dict[str, float] = {}
 
 
 def _resolve_requester_name(update: Update) -> str:
@@ -121,33 +125,45 @@ def _collect_mumble_snapshot(
 
         users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
         own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
+        snapshot_time = time.monotonic()
+        with _USER_CONNECTED_AT_LOCK:
+            update_mumble_connection_tracker(
+                users=users,
+                own_session=own_session,
+                connected_since_by_key=_USER_CONNECTED_AT,
+                now_monotonic=snapshot_time,
+            )
 
-        output_channels: list[dict[str, object]] = []
-        for channel in sorted(channels, key=lambda item: str(item.get("name", "")).casefold()):
-            channel_id = channel.get("channel_id")
-            channel_name = str(channel.get("name", "Tuntematon kanava"))
+            output_channels: list[dict[str, object]] = []
+            for channel in sorted(channels, key=lambda item: str(item.get("name", "")).casefold()):
+                channel_id = channel.get("channel_id")
+                channel_name = str(channel.get("name", "Tuntematon kanava"))
 
-            channel_users: list[dict[str, object]] = []
-            for user in users:
-                if user.get("channel_id") != channel_id:
-                    continue
-                if own_session is not None and user.get("session") == own_session:
-                    continue
+                channel_users: list[dict[str, object]] = []
+                for user in users:
+                    if user.get("channel_id") != channel_id:
+                        continue
+                    if own_session is not None and user.get("session") == own_session:
+                        continue
 
-                channel_users.append(
-                    {
-                        "name": user.get("name"),
-                        "online_seconds": user.get("onlinesecs"),
-                        "muted": (
-                            bool(user.get("mute"))
-                            or bool(user.get("self_mute"))
-                            or bool(user.get("suppress"))
-                        ),
-                        "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
-                    }
-                )
+                    channel_users.append(
+                        {
+                            "name": user.get("name"),
+                            "online_seconds": resolve_online_seconds(
+                                user=user,
+                                connected_since_by_key=_USER_CONNECTED_AT,
+                                now_monotonic=snapshot_time,
+                            ),
+                            "muted": (
+                                bool(user.get("mute"))
+                                or bool(user.get("self_mute"))
+                                or bool(user.get("suppress"))
+                            ),
+                            "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
+                        }
+                    )
 
-            output_channels.append({"name": channel_name, "users": channel_users})
+                output_channels.append({"name": channel_name, "users": channel_users})
 
         return {
             "server_address": f"{config.mumble_host}:{config.mumble_port}",
