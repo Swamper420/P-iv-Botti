@@ -46,6 +46,10 @@ class WeatherLogicTests(unittest.TestCase):
             stt_backend_url="http://127.0.0.1:8081/transcribe",
             stt_timeout_seconds=30,
             stt_max_audio_seconds=600,
+            link_video_download_enabled=False,
+            link_video_download_timeout_seconds=120,
+            link_video_download_max_filesize_mb=50,
+            link_video_download_max_height=360,
         )
 
         with (
