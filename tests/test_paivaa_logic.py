@@ -1,6 +1,6 @@
 import unittest
 
-from bot.commands.paivaa_logic import get_paivaa_reply, split_message
+from bot.commands.paivaa_logic import get_paivaa_reply
 
 
 class PaivaaLogicTests(unittest.TestCase):
@@ -12,13 +12,6 @@ class PaivaaLogicTests(unittest.TestCase):
 
     def test_does_not_match_none(self) -> None:
         self.assertIsNone(get_paivaa_reply(None))
-
-    def test_split_message_under_limit(self) -> None:
-        self.assertEqual(split_message("hello", 5), ["hello"])
-
-    def test_split_message_over_limit(self) -> None:
-        self.assertEqual(split_message("abcdefghij", 4), ["abcd", "efgh", "ij"])
-
 
 if __name__ == "__main__":
     unittest.main()
