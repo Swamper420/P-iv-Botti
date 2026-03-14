@@ -11,10 +11,15 @@ from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.active_chats import track_active_chat
-from bot.commands.link_video_logic import build_yt_dlp_format_selector, extract_urls
+from bot.commands.link_video_logic import (
+    build_yt_dlp_format_selector,
+    extract_urls,
+    get_url_regex,
+)
 from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
+BYTES_PER_MB = 1024 * 1024
 
 
 def _download_video(url: str, config: BotConfig, download_dir: Path) -> Path | None:
@@ -49,13 +54,14 @@ def _download_video(url: str, config: BotConfig, download_dir: Path) -> Path | N
     if completed.returncode != 0:
         return None
 
-    for candidate in sorted(download_dir.glob("video.*")):
-        if candidate.suffix == ".part":
-            continue
-        if candidate.is_file():
-            return candidate
-
-    return None
+    return next(
+        (
+            candidate
+            for candidate in sorted(download_dir.glob("video.*"))
+            if candidate.suffix != ".part" and candidate.is_file()
+        ),
+        None,
+    )
 
 
 def _build_handler(
@@ -91,7 +97,7 @@ def _build_handler(
                 try:
                     if (
                         downloaded_path.stat().st_size
-                        > config.link_video_download_max_filesize_mb * 1024 * 1024
+                        > config.link_video_download_max_filesize_mb * BYTES_PER_MB
                     ):
                         continue
                     with downloaded_path.open("rb") as video_file:
@@ -106,10 +112,12 @@ def _build_handler(
 
 
 def register(application: Application, config: BotConfig) -> None:
-    url_regex = r"(?i)https?://[^\s<>()]+"
     application.add_handler(
         MessageHandler(
-            (filters.Regex(url_regex) | filters.CaptionRegex(url_regex)) & ~filters.COMMAND,
+            (
+                filters.Regex(get_url_regex()) | filters.CaptionRegex(get_url_regex())
+            )
+            & ~filters.COMMAND,
             _build_handler(config),
         )
     )

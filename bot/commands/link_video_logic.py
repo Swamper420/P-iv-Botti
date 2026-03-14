@@ -13,6 +13,10 @@ def extract_urls(text: str | None) -> list[str]:
     return [match.rstrip(_TRAILING_PUNCTUATION) for match in _URL_PATTERN.findall(text)]
 
 
+def get_url_regex() -> str:
+    return _URL_PATTERN.pattern
+
+
 def build_yt_dlp_format_selector(max_height: int) -> str:
     return (
         f"bv*[height<={max_height}][vcodec^=vp09]+ba/"
