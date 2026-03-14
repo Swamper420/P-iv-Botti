@@ -23,6 +23,13 @@ class ConfigTests(unittest.TestCase):
                 "STT_BACKEND_URL": "http://127.0.0.1:9000/transcribe",
                 "STT_TIMEOUT_SECONDS": "21",
                 "STT_MAX_AUDIO_SECONDS": "599",
+                "MUMBLE_HOST": "127.0.0.2",
+                "MUMBLE_PORT": "64739",
+                "MUMBLE_USERNAME": "status-user",
+                "MUMBLE_PASSWORD": "status-pass",
+                "MUMBLE_CONNECT_TIMEOUT_SECONDS": "11",
+                "MUMBLE_STATUS_WAIT_SECONDS": "2",
+                "MUMBLE_TARGET_CHANNELS": "Alpha,Beta",
             },
             clear=False,
         ):
@@ -40,6 +47,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.stt_backend_url, "http://127.0.0.1:9000/transcribe")
         self.assertEqual(config.stt_timeout_seconds, 21)
         self.assertEqual(config.stt_max_audio_seconds, 599)
+        self.assertEqual(config.mumble_host, "127.0.0.2")
+        self.assertEqual(config.mumble_port, 64739)
+        self.assertEqual(config.mumble_username, "status-user")
+        self.assertEqual(config.mumble_password, "status-pass")
+        self.assertEqual(config.mumble_connect_timeout_seconds, 11)
+        self.assertEqual(config.mumble_status_wait_seconds, 2)
+        self.assertEqual(config.mumble_target_channels, ("Alpha", "Beta"))
 
 
 if __name__ == "__main__":

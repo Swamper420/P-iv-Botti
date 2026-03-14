@@ -42,6 +42,13 @@ class BotConfig:
     stt_backend_url: str
     stt_timeout_seconds: int
     stt_max_audio_seconds: int
+    mumble_host: str
+    mumble_port: int
+    mumble_username: str
+    mumble_password: str
+    mumble_connect_timeout_seconds: int
+    mumble_status_wait_seconds: int
+    mumble_target_channels: tuple[str, ...]
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -94,4 +101,17 @@ class BotConfig:
             ).strip(),
             stt_timeout_seconds=int(os.getenv("STT_TIMEOUT_SECONDS", "30")),
             stt_max_audio_seconds=int(os.getenv("STT_MAX_AUDIO_SECONDS", "600")),
+            mumble_host=os.getenv("MUMBLE_HOST", "127.0.0.1").strip(),
+            mumble_port=int(os.getenv("MUMBLE_PORT", "64738")),
+            mumble_username=os.getenv("MUMBLE_USERNAME", "telegram-status-bot").strip(),
+            mumble_password=os.getenv("MUMBLE_PASSWORD", "").strip(),
+            mumble_connect_timeout_seconds=int(
+                os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
+            ),
+            mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
+            mumble_target_channels=tuple(
+                channel.strip()
+                for channel in os.getenv("MUMBLE_TARGET_CHANNELS", "Channel 1,Channel 2").split(",")
+                if channel.strip()
+            ),
         )

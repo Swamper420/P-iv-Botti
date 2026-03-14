@@ -23,7 +23,9 @@ When extending this project:
 - Commands are implemented as module pairs in `bot/commands/`:
   - `aih.py` + `aih_logic.py`
   - `help.py` + `help_logic.py`
+  - `mumble.py` + `mumble_logic.py`
   - `paivaa.py` + `paivaa_logic.py`
+  - `stt.py` + `stt_logic.py`
   - `weather.py` + `weather_logic.py`
 - Shared command helpers live in `bot/commands/message_utils.py`:
   - `split_message(...)` for chunking long replies
