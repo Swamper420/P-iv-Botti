@@ -9,6 +9,8 @@ from bot.commands.message_utils import reply_in_chunks
 from bot.commands.paivaa_logic import get_paivaa_reply
 from bot.config import BotConfig
 
+COMMAND_USAGE = "päivää"
+
 
 def _build_handler(
     config: BotConfig,

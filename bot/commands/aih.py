@@ -16,6 +16,7 @@ from bot.commands.message_utils import reply_in_chunks
 from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
+COMMAND_USAGE = "aih: <kysymys>"
 
 def _query_ai_backend(prompt: str, config: BotConfig) -> str:
     payload = json.dumps({"prompt": prompt, "max_tokens": config.ai_max_tokens}).encode(

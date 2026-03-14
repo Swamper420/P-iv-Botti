@@ -16,6 +16,8 @@ from bot.commands.weather_logic import (
 )
 from bot.config import BotConfig
 
+COMMAND_USAGE = "!sääkuva <kaupunki>"
+
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:

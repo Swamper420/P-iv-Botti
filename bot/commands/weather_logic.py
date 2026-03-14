@@ -47,12 +47,12 @@ def _download_bytes(
 
 
 def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes | None, str]:
-    headers = {"Digitraffic-User": config.digitraffic_user}
+    station_headers = {"Digitraffic-User": config.digitraffic_user}
     try:
         data = _fetch_json(
             config.weathercam_stations_url,
             config.weather_api_timeout_seconds,
-            headers=headers,
+            headers=station_headers,
         )
     except TimeoutError:
         LOGGER.exception("Weather camera station fetch timed out")
@@ -81,9 +81,13 @@ def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes 
         return None, "Kamera ei ole saatavilla"
 
     image_url = f"{config.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
+    image_headers = {
+        "Digitraffic-User": config.digitraffic_user,
+        "Accept": "image/jpeg",
+    }
     try:
         img_data = _download_bytes(
-            image_url, config.weather_api_timeout_seconds, headers=headers
+            image_url, config.weather_api_timeout_seconds, headers=image_headers
         )
     except TimeoutError:
         LOGGER.exception("Weather camera image download timed out")

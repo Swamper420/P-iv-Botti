@@ -3,7 +3,7 @@ from pathlib import Path
 
 from telegram.ext import MessageHandler, filters
 
-from bot.commands import register_commands
+from bot.commands import _discover_command_modules, register_commands
 from bot.config import BotConfig
 
 
@@ -16,9 +16,8 @@ class _DummyApplication:
 
 
 class CommandRegistrationTests(unittest.TestCase):
-    def test_registers_specific_message_filters(self) -> None:
-        app = _DummyApplication()
-        config = BotConfig(
+    def _config(self) -> BotConfig:
+        return BotConfig(
             telegram_bot_token="token",
             storage_dir=Path("."),
             ai_backend_url="http://example.invalid/query",
@@ -33,9 +32,23 @@ class CommandRegistrationTests(unittest.TestCase):
             max_reply_length=5000,
         )
 
-        register_commands(app, config)
+    def test_registers_all_command_modules_with_message_filters(self) -> None:
+        discovered_modules = _discover_command_modules()
+        discovered_names = {module.__name__.split(".")[-1] for module in discovered_modules}
+        expected_count = len(discovered_modules)
 
-        self.assertEqual(len(app.handlers), 3)
+        app = _DummyApplication()
+        register_commands(app, self._config())
+
+        self.assertTrue({"aih", "help", "paivaa", "weather"}.issubset(discovered_names))
+        self.assertEqual(len(app.handlers), expected_count)
+        self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
+        self.assertTrue(all(isinstance(handler.filters, filters.Regex) for handler in app.handlers))
+
+    def test_registers_specific_message_filters(self) -> None:
+        app = _DummyApplication()
+        register_commands(app, self._config())
+
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
         self.assertTrue(all(isinstance(handler.filters, filters.Regex) for handler in app.handlers))
 
