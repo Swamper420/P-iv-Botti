@@ -11,14 +11,18 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.active_chats import track_active_chat
 from bot.commands.message_utils import reply_in_chunks
-from bot.commands.mumble_logic import format_mumble_status_report, is_mumble_status_command
+from bot.commands.mumble_logic import (
+    format_mumble_channel_notice,
+    format_mumble_status_report,
+    is_mumble_status_command,
+)
 from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
 COMMAND_USAGE = "!mumble"
 
 
-def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
+def _collect_mumble_snapshot(config: BotConfig, requested_by: str) -> dict[str, object]:
     try:
         import pymumble_py3
         from pymumble_py3.constants import (
@@ -63,6 +67,20 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
             for channel in getattr(mumble, "channels", {}).values()
             if isinstance(channel, dict)
         ]
+        channel_notice = format_mumble_channel_notice(requested_by)
+        for channel in channels:
+            send_text_message = getattr(channel, "send_text_message", None)
+            if not callable(send_text_message):
+                continue
+            try:
+                send_text_message(channel_notice)
+            except Exception:
+                LOGGER.warning(
+                    "Failed to send mumble command notice to channel %r",
+                    channel.get("name", "Tuntematon kanava"),
+                    exc_info=True,
+                )
+
         users = [user for user in getattr(mumble, "users", {}).values() if isinstance(user, dict)]
         own_session = getattr(getattr(mumble, "users", None), "myself_session", None)
 
@@ -78,40 +96,14 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
                 if own_session is not None and user.get("session") == own_session:
                     continue
 
-                reserved_keys = {
-                    "name",
-                    "session",
-                    "user_id",
-                    "channel_id",
-                    "mute",
-                    "deaf",
-                    "self_mute",
-                    "self_deaf",
-                    "suppress",
-                    "recording",
-                    "onlinesecs",
-                    "idlesecs",
-                }
-                extras = {
-                    key: value
-                    for key, value in user.items()
-                    if key not in reserved_keys and isinstance(value, (str, int, float, bool))
-                }
-
                 channel_users.append(
                     {
                         "name": user.get("name"),
-                        "session": user.get("session"),
-                        "user_id": user.get("user_id"),
                         "online_seconds": user.get("onlinesecs"),
-                        "idle_seconds": user.get("idlesecs"),
-                        "mute": user.get("mute"),
-                        "deaf": user.get("deaf"),
-                        "self_mute": user.get("self_mute"),
-                        "self_deaf": user.get("self_deaf"),
-                        "suppress": user.get("suppress"),
-                        "recording": user.get("recording"),
-                        "extras": extras,
+                        "muted": bool(user.get("mute"))
+                        or bool(user.get("self_mute"))
+                        or bool(user.get("suppress")),
+                        "deafened": bool(user.get("deaf")) or bool(user.get("self_deaf")),
                     }
                 )
 
@@ -136,6 +128,20 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
+    def _resolve_requester_name(update: Update) -> str:
+        user = update.effective_user
+        if user is None:
+            return "tuntematon käyttäjä"
+
+        if user.username:
+            return f"@{user.username}"
+
+        full_name = user.full_name.strip()
+        if full_name:
+            return full_name
+
+        return str(user.id)
+
     async def handle_mumble(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
 
@@ -148,8 +154,9 @@ def _build_handler(
         if not is_mumble_status_command(message.text):
             return
 
+        requested_by = _resolve_requester_name(update)
         try:
-            snapshot = await asyncio.to_thread(_collect_mumble_snapshot, config)
+            snapshot = await asyncio.to_thread(_collect_mumble_snapshot, config, requested_by)
             reply = format_mumble_status_report(
                 server_address=str(snapshot["server_address"]),
                 channels=list(snapshot["channels"]),

@@ -22,21 +22,27 @@ def format_duration(seconds: int | None) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def format_mumble_channel_notice(requested_by: str) -> str:
+    requester = requested_by.strip() or "tuntematon käyttäjä"
+    return f"📣 Telegramissa !mumble-komennon käytti: {requester}"
+
+
 def format_mumble_status_report(
     *,
     server_address: str,
     channels: list[dict[str, object]],
 ) -> str:
-    lines = [f"🎧 Mumble ({server_address})", f"Kanavia seurannassa: {len(channels)}"]
+    total_users = 0
+    lines = [f"🎧 Mumble ({server_address})"]
 
     for channel in channels:
         channel_name = str(channel.get("name", "Tuntematon kanava"))
         users = channel.get("users", [])
         user_list = users if isinstance(users, list) else []
-        lines.append(f"\n• {channel_name} ({len(user_list)} käyttäjää)")
+        total_users += len(user_list)
+        lines.append(f"• {channel_name} ({len(user_list)})")
 
         if not user_list:
-            lines.append("  - Ei käyttäjiä")
             continue
 
         for user in user_list:
@@ -44,38 +50,16 @@ def format_mumble_status_report(
                 continue
 
             name = str(user.get("name", "Tuntematon käyttäjä"))
-            session = user.get("session")
-            user_id = user.get("user_id")
             online_seconds = user.get("online_seconds")
-            idle_seconds = user.get("idle_seconds")
-            states = {
-                "mute": bool(user.get("mute")),
-                "deaf": bool(user.get("deaf")),
-                "self_mute": bool(user.get("self_mute")),
-                "self_deaf": bool(user.get("self_deaf")),
-                "suppress": bool(user.get("suppress")),
-                "recording": bool(user.get("recording")),
-            }
-            extras = user.get("extras", {})
-            extra_details = (
-                ", ".join(f"{key}={value}" for key, value in extras.items())
-                if isinstance(extras, dict) and extras
-                else "ei lisätietoja"
-            )
+            muted = bool(user.get("muted"))
+            deafened = bool(user.get("deafened"))
 
             lines.append(
-                f"  - {name} (session={session}, user_id={user_id})"
+                "  - "
+                f"{name} | ⏱ {format_duration(online_seconds if isinstance(online_seconds, int) else None)}"
+                f" | mute {'kyllä' if muted else 'ei'}"
+                f" | deaf {'kyllä' if deafened else 'ei'}"
             )
-            lines.append(
-                "    online="
-                f"{format_duration(online_seconds if isinstance(online_seconds, int) else None)}, "
-                "idle="
-                f"{format_duration(idle_seconds if isinstance(idle_seconds, int) else None)}"
-            )
-            lines.append(
-                "    tila: "
-                + ", ".join(f"{key}={'kyllä' if value else 'ei'}" for key, value in states.items())
-            )
-            lines.append(f"    extra: {extra_details}")
 
+    lines.insert(1, f"Kanavat: {len(channels)} | Käyttäjät: {total_users}")
     return "\n".join(lines)
