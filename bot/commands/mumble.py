@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,12 @@ _PERSISTENT_MUMBLE_LOCK = Lock()
 _PERSISTENT_MUMBLE: object | None = None
 _PERSISTENT_TELE_MESSAGES_LOCK = Lock()
 _PERSISTENT_TELE_MESSAGES: list[tuple[str, str]] = []
+_MONITOR_CONNECTION_STATE_LOCK = Lock()
+_MONITOR_CONNECTED_AT_EPOCH: float | None = None
+_MONITOR_DISCONNECTED_AT_EPOCH: float | None = None
+_MONITOR_FALLBACK_TASK_LOCK = Lock()
+_MONITOR_FALLBACK_TASK: asyncio.Task[None] | None = None
+_MONITOR_FALLBACK_STOP_EVENT: asyncio.Event | None = None
 
 
 def _resolve_requester_name(update: Update) -> str:
@@ -118,6 +125,71 @@ def _reset_persistent_mumble_connection() -> None:
         mumble.join(timeout=1)
     except Exception:
         pass
+
+
+def _format_epoch_timestamp(epoch_seconds: float) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat()
+
+
+def _reset_monitor_connection_state() -> None:
+    global _MONITOR_CONNECTED_AT_EPOCH, _MONITOR_DISCONNECTED_AT_EPOCH
+    with _MONITOR_CONNECTION_STATE_LOCK:
+        _MONITOR_CONNECTED_AT_EPOCH = None
+        _MONITOR_DISCONNECTED_AT_EPOCH = None
+
+
+def _update_monitor_connection_state(
+    *, server_address: str, connected: bool, now_epoch: float | None = None
+) -> None:
+    global _MONITOR_CONNECTED_AT_EPOCH, _MONITOR_DISCONNECTED_AT_EPOCH
+
+    timestamp = now_epoch if now_epoch is not None else time.time()
+    with _MONITOR_CONNECTION_STATE_LOCK:
+        connected_at = _MONITOR_CONNECTED_AT_EPOCH
+        disconnected_at = _MONITOR_DISCONNECTED_AT_EPOCH
+
+        if connected:
+            if connected_at is not None:
+                return
+
+            _MONITOR_CONNECTED_AT_EPOCH = timestamp
+            _MONITOR_DISCONNECTED_AT_EPOCH = None
+
+            connected_iso = _format_epoch_timestamp(timestamp)
+            if disconnected_at is None:
+                LOGGER.info("Mumble monitor connected to %s at %s", server_address, connected_iso)
+                return
+
+            downtime_seconds = max(timestamp - disconnected_at, 0.0)
+            LOGGER.info(
+                "Mumble monitor reconnected to %s at %s (downtime %.1fs)",
+                server_address,
+                connected_iso,
+                downtime_seconds,
+            )
+            return
+
+        if disconnected_at is not None:
+            return
+
+        _MONITOR_DISCONNECTED_AT_EPOCH = timestamp
+        _MONITOR_CONNECTED_AT_EPOCH = None
+        disconnected_iso = _format_epoch_timestamp(timestamp)
+        if connected_at is None:
+            LOGGER.warning(
+                "Mumble monitor connection to %s is unavailable at %s",
+                server_address,
+                disconnected_iso,
+            )
+            return
+
+        uptime_seconds = max(timestamp - connected_at, 0.0)
+        LOGGER.warning(
+            "Mumble monitor lost connection to %s at %s (uptime %.1fs)",
+            server_address,
+            disconnected_iso,
+            uptime_seconds,
+        )
 
 
 def _build_snapshot_from_connected_mumble(
@@ -494,47 +566,111 @@ def _build_handler(
     return handle_mumble
 
 
+async def _refresh_monitored_snapshot(application: Application, config: BotConfig) -> None:
+    server_address = f"{config.mumble_host}:{config.mumble_port}"
+    try:
+        snapshot = await asyncio.to_thread(_collect_monitored_snapshot, config)
+        _store_monitored_snapshot(snapshot)
+        _update_monitor_connection_state(server_address=server_address, connected=True)
+        tele_chat_id = config.mumble_tele_chat_id
+        tele_messages = snapshot.get("tele_messages", [])
+        if isinstance(tele_chat_id, int) and isinstance(tele_messages, list):
+            for index, tele_message in enumerate(tele_messages):
+                if not isinstance(tele_message, tuple) or len(tele_message) != 2:
+                    continue
+                sender_name, body = tele_message
+                if not isinstance(sender_name, str) or not isinstance(body, str):
+                    continue
+                try:
+                    await application.bot.send_message(
+                        chat_id=tele_chat_id,
+                        text=f"🎧 {sender_name}: {body}",
+                    )
+                except Exception:
+                    LOGGER.exception("Failed to forward mumble !tele message to Telegram")
+                    _requeue_persistent_tele_messages(
+                        [
+                            candidate
+                            for candidate in tele_messages[index:]
+                            if isinstance(candidate, tuple)
+                            and len(candidate) == 2
+                            and isinstance(candidate[0], str)
+                            and isinstance(candidate[1], str)
+                        ]
+                    )
+                    break
+    except (RuntimeError, socket_timeout, TimeoutError, OSError):
+        _update_monitor_connection_state(server_address=server_address, connected=False)
+        LOGGER.exception("Background mumble monitoring check failed")
+
+
+async def start_background_monitor(application: Application, config: BotConfig) -> None:
+    global _MONITOR_FALLBACK_TASK, _MONITOR_FALLBACK_STOP_EVENT
+
+    job_queue = getattr(application, "job_queue", None)
+    if job_queue is not None and callable(getattr(job_queue, "run_repeating", None)):
+        return
+
+    with _MONITOR_FALLBACK_TASK_LOCK:
+        existing_task = _MONITOR_FALLBACK_TASK
+        if existing_task is not None and not existing_task.done():
+            return
+
+        stop_event = asyncio.Event()
+        _MONITOR_FALLBACK_STOP_EVENT = stop_event
+
+        async def _run_fallback_loop() -> None:
+            interval_seconds = config.mumble_monitor_interval_seconds
+            while not stop_event.is_set():
+                await _refresh_monitored_snapshot(application, config)
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+                except TimeoutError:
+                    continue
+
+        _MONITOR_FALLBACK_TASK = asyncio.create_task(
+            _run_fallback_loop(),
+            name="mumble-monitor-fallback-loop",
+        )
+
+    LOGGER.info("Started fallback mumble monitor loop without JobQueue support")
+
+
+async def stop_background_monitor() -> None:
+    global _MONITOR_FALLBACK_TASK, _MONITOR_FALLBACK_STOP_EVENT
+
+    with _MONITOR_FALLBACK_TASK_LOCK:
+        task = _MONITOR_FALLBACK_TASK
+        stop_event = _MONITOR_FALLBACK_STOP_EVENT
+        _MONITOR_FALLBACK_TASK = None
+        _MONITOR_FALLBACK_STOP_EVENT = None
+
+    if stop_event is not None:
+        stop_event.set()
+
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            LOGGER.exception("Fallback mumble monitor loop stopped with an unexpected error")
+
+    _reset_persistent_mumble_connection()
+    _reset_monitor_connection_state()
+
+
 def register(application: Application, config: BotConfig) -> None:
     job_queue = getattr(application, "job_queue", None)
     if job_queue is not None and callable(getattr(job_queue, "run_repeating", None)):
         interval_seconds = config.mumble_monitor_interval_seconds
 
-        async def _refresh_monitored_snapshot(_context: object) -> None:
-            try:
-                snapshot = await asyncio.to_thread(_collect_monitored_snapshot, config)
-                _store_monitored_snapshot(snapshot)
-                tele_chat_id = config.mumble_tele_chat_id
-                tele_messages = snapshot.get("tele_messages", [])
-                if isinstance(tele_chat_id, int) and isinstance(tele_messages, list):
-                    for index, tele_message in enumerate(tele_messages):
-                        if not isinstance(tele_message, tuple) or len(tele_message) != 2:
-                            continue
-                        sender_name, body = tele_message
-                        if not isinstance(sender_name, str) or not isinstance(body, str):
-                            continue
-                        try:
-                            await application.bot.send_message(
-                                chat_id=tele_chat_id,
-                                text=f"🎧 {sender_name}: {body}",
-                            )
-                        except Exception:
-                            LOGGER.exception("Failed to forward mumble !tele message to Telegram")
-                            _requeue_persistent_tele_messages(
-                                [
-                                    candidate
-                                    for candidate in tele_messages[index:]
-                                    if isinstance(candidate, tuple)
-                                    and len(candidate) == 2
-                                    and isinstance(candidate[0], str)
-                                    and isinstance(candidate[1], str)
-                                ]
-                            )
-                            break
-            except (RuntimeError, socket_timeout, TimeoutError, OSError):
-                LOGGER.exception("Background mumble monitoring check failed")
+        async def _refresh_monitored_snapshot_job(_context: object) -> None:
+            await _refresh_monitored_snapshot(application, config)
 
         job_queue.run_repeating(
-            _refresh_monitored_snapshot,
+            _refresh_monitored_snapshot_job,
             interval=interval_seconds,
             first=0,
             name="mumble-monitor-snapshot",
