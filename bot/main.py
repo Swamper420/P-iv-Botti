@@ -20,7 +20,7 @@ def main() -> None:
     config = BotConfig.from_environment()
 
     app = Application.builder().token(config.telegram_bot_token).build()
-    register_commands(app)
+    register_commands(app, config)
     app.run_polling(allowed_updates=["message"])
 
 

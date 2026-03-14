@@ -26,6 +26,10 @@ def _load_env_file(env_path: Path) -> None:
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
+    ai_backend_url: str
+    ai_max_tokens: int
+    ai_backend_timeout_seconds: int
+    max_reply_length: int
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -41,4 +45,11 @@ class BotConfig:
         ).resolve()
         storage_dir.mkdir(parents=True, exist_ok=True)
 
-        return cls(telegram_bot_token=token, storage_dir=storage_dir)
+        return cls(
+            telegram_bot_token=token,
+            storage_dir=storage_dir,
+            ai_backend_url=os.getenv("AI_BACKEND_URL", "http://127.0.0.1:8080/query").strip(),
+            ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "650")),
+            ai_backend_timeout_seconds=int(os.getenv("AI_BACKEND_TIMEOUT_SECONDS", "30")),
+            max_reply_length=int(os.getenv("MAX_REPLY_LENGTH", "5000")),
+        )
