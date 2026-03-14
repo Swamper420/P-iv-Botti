@@ -39,6 +39,9 @@ class BotConfig:
     steam_cs2_rss_url: str
     steam_rss_poll_interval_seconds: int
     steam_rss_request_timeout_seconds: int
+    stt_backend_url: str
+    stt_timeout_seconds: int
+    stt_max_audio_seconds: int
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -86,4 +89,9 @@ class BotConfig:
             steam_rss_request_timeout_seconds=int(
                 os.getenv("STEAM_RSS_REQUEST_TIMEOUT_SECONDS", "30")
             ),
+            stt_backend_url=os.getenv(
+                "STT_BACKEND_URL", "http://127.0.0.1:8081/transcribe"
+            ).strip(),
+            stt_timeout_seconds=int(os.getenv("STT_TIMEOUT_SECONDS", "30")),
+            stt_max_audio_seconds=int(os.getenv("STT_MAX_AUDIO_SECONDS", "600")),
         )
