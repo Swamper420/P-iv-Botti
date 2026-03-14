@@ -1,6 +1,6 @@
 import unittest
 
-from bot.commands.paivaa_logic import get_paivaa_reply
+from bot.commands.paivaa_logic import get_aih_prompt, get_paivaa_reply, split_message
 
 
 class PaivaaLogicTests(unittest.TestCase):
@@ -12,6 +12,21 @@ class PaivaaLogicTests(unittest.TestCase):
 
     def test_does_not_match_none(self) -> None:
         self.assertIsNone(get_paivaa_reply(None))
+
+    def test_extracts_aih_prompt(self) -> None:
+        self.assertEqual(get_aih_prompt("aih: Who was the president of Finland in 2012"), "Who was the president of Finland in 2012")
+
+    def test_extracts_aih_prompt_case_insensitive(self) -> None:
+        self.assertEqual(get_aih_prompt("  AIH:   test prompt  "), "test prompt")
+
+    def test_does_not_extract_empty_aih_prompt(self) -> None:
+        self.assertIsNone(get_aih_prompt("aih:   "))
+
+    def test_split_message_under_limit(self) -> None:
+        self.assertEqual(split_message("hello", 5), ["hello"])
+
+    def test_split_message_over_limit(self) -> None:
+        self.assertEqual(split_message("abcdefghij", 4), ["abcd", "efgh", "ij"])
 
 
 if __name__ == "__main__":

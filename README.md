@@ -15,6 +15,10 @@ The bot replies to message text `Päivää` with:
 
 `Päivää *tips fedora*`
 
+The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend at
+`http://127.0.0.1:8080/query` with `max_tokens=650` and replies with the response. Long replies are
+split into multiple messages (5000 chars per message).
+
 ## Setup
 
 1. Create and activate a virtual environment.
