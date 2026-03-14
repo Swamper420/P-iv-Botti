@@ -40,6 +40,9 @@ class WeatherLogicTests(unittest.TestCase):
             weather_api_timeout_seconds=30,
             digitraffic_user="telegram-bot-1.0",
             max_reply_length=5000,
+            steam_cs2_rss_url="https://steamcommunity.com/games/csgo/rss/",
+            steam_rss_poll_interval_seconds=300,
+            steam_rss_request_timeout_seconds=30,
         )
 
         with (

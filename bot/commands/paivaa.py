@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
+from bot.active_chats import track_active_chat
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.paivaa_logic import get_paivaa_reply
 from bot.config import BotConfig
@@ -21,6 +22,8 @@ def _build_handler(
         message = update.effective_message
         if message is None:
             return
+
+        track_active_chat(update, config.storage_dir)
 
         reply = get_paivaa_reply(message.text)
         if reply is not None:

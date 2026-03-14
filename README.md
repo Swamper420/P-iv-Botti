@@ -8,6 +8,7 @@ Async and modular Telegram bot skeleton.
 - Extendable command/reply modules under `bot/commands/`
 - Environment-driven configuration via `.env` (template in `example.env`)
 - Persistent data directory under `storage/`
+- CS2 RSS update watcher that posts new updates to active bot chats
 
 ## Current behavior
 
@@ -18,6 +19,10 @@ The bot replies to message text `Päivää` with:
 The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend and replies
 with the response. `AI_BACKEND_URL`, `AI_MAX_TOKENS`, `AI_BACKEND_TIMEOUT_SECONDS`, and
 `MAX_REPLY_LENGTH` are configured through `.env` (`example.env` has defaults).
+
+The bot polls Steam's CS2 RSS feed in the background and forwards new updates to chats where the bot
+has been active. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and
+`STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
 
 ## Setup
 

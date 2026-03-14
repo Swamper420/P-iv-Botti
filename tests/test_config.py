@@ -17,6 +17,9 @@ class ConfigTests(unittest.TestCase):
                 "OPENWEATHER_API_KEY": "ow-key",
                 "WEATHER_API_TIMEOUT_SECONDS": "25",
                 "MAX_REPLY_LENGTH": "777",
+                "STEAM_CS2_RSS_URL": "https://steam.example/rss",
+                "STEAM_RSS_POLL_INTERVAL_SECONDS": "123",
+                "STEAM_RSS_REQUEST_TIMEOUT_SECONDS": "9",
             },
             clear=False,
         ):
@@ -28,6 +31,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.openweather_api_key, "ow-key")
         self.assertEqual(config.weather_api_timeout_seconds, 25)
         self.assertEqual(config.max_reply_length, 777)
+        self.assertEqual(config.steam_cs2_rss_url, "https://steam.example/rss")
+        self.assertEqual(config.steam_rss_poll_interval_seconds, 123)
+        self.assertEqual(config.steam_rss_request_timeout_seconds, 9)
 
 
 if __name__ == "__main__":
