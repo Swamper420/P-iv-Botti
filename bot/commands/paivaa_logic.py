@@ -5,6 +5,7 @@ from pathlib import Path
 
 PAIVAA_HISTORY_FILE = "paivaa_recent_replies.json"
 PAIVAA_HISTORY_SIZE = 4
+PAIVAA_FALLBACK_REPLY = "Päiwää~ uwu nyaa >w<"
 
 
 def get_paivaa_reply(text: str | None) -> str | None:
@@ -62,8 +63,8 @@ def build_paivaa_ai_prompt(recent_replies: list[str]) -> str:
 
 
 def ensure_unique_paivaa_reply(reply: str, recent_replies: list[str]) -> str:
-    candidate = reply.strip() or "Päiwää~ uwu nyaa >w<"
-    candidate = candidate.splitlines()[0].strip() or "Päiwää~ uwu nyaa >w<"
+    candidate = reply.strip() or PAIVAA_FALLBACK_REPLY
+    candidate = candidate.splitlines()[0].strip() or PAIVAA_FALLBACK_REPLY
 
     if candidate not in recent_replies:
         return candidate
