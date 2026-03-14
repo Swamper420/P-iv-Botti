@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
+from bot.active_chats import track_active_chat
 from bot.commands.aih_logic import get_aih_prompt
 from bot.commands.message_utils import reply_in_chunks
 from bot.config import BotConfig
@@ -59,6 +60,8 @@ def _build_handler(
         message = update.effective_message
         if message is None:
             return
+
+        track_active_chat(update, config.storage_dir)
 
         prompt = get_aih_prompt(message.text)
         if prompt is None:

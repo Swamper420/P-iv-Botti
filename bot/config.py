@@ -36,6 +36,9 @@ class BotConfig:
     weather_api_timeout_seconds: int
     digitraffic_user: str
     max_reply_length: int
+    steam_cs2_rss_url: str
+    steam_rss_poll_interval_seconds: int
+    steam_rss_request_timeout_seconds: int
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -74,4 +77,13 @@ class BotConfig:
             ),
             digitraffic_user=os.getenv("DIGITRAFFIC_USER", "telegram-bot-1.0").strip(),
             max_reply_length=int(os.getenv("MAX_REPLY_LENGTH", "5000")),
+            steam_cs2_rss_url=os.getenv(
+                "STEAM_CS2_RSS_URL", "https://steamcommunity.com/games/csgo/rss/"
+            ).strip(),
+            steam_rss_poll_interval_seconds=int(
+                os.getenv("STEAM_RSS_POLL_INTERVAL_SECONDS", "300")
+            ),
+            steam_rss_request_timeout_seconds=int(
+                os.getenv("STEAM_RSS_REQUEST_TIMEOUT_SECONDS", "30")
+            ),
         )

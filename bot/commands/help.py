@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
+from bot.active_chats import track_active_chat
 from bot.commands.help_logic import build_help_reply
 from bot.commands.message_utils import reply_in_chunks
 from bot.config import BotConfig
@@ -17,6 +18,8 @@ def _build_handler(
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
     async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
+
+        track_active_chat(update, config.storage_dir)
 
         await reply_in_chunks(
             update, build_help_reply(command_usages), config.max_reply_length

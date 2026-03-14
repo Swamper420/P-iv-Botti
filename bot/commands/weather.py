@@ -8,6 +8,7 @@ from telegram import InputFile, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
+from bot.active_chats import track_active_chat
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.weather_logic import (
     get_openweather_summary,
@@ -25,6 +26,8 @@ def _build_handler(
         message = update.effective_message
         if message is None:
             return
+
+        track_active_chat(update, config.storage_dir)
 
         matched, location = parse_weather_camera_location(message.text)
         if not matched:
