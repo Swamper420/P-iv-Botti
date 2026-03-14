@@ -25,7 +25,7 @@ def extract_mumble_tele_message(text: str | None) -> str | None:
     if not stripped.casefold().startswith(prefix):
         return None
 
-    message = stripped[len(prefix) :].strip()
+    message = stripped[len(prefix):].strip()
     if not message:
         return None
     return message
