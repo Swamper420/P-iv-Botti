@@ -24,9 +24,8 @@ The bot polls Steam's CS2 RSS feed in the background and forwards new updates to
 has been active. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and
 `STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
 
-The bot supports `mumble` / `!mumble` for local Mumble server status checks on configured channels.
-Set `MUMBLE_HOST`, `MUMBLE_PORT`, `MUMBLE_USERNAME`, `MUMBLE_PASSWORD`, and
-`MUMBLE_TARGET_CHANNELS` (minimum two comma-separated channels) in `.env`.
+The bot supports `mumble` / `!mumble` for local Mumble server status checks on all server channels.
+Set `MUMBLE_HOST`, `MUMBLE_PORT`, `MUMBLE_USERNAME`, and `MUMBLE_PASSWORD` in `.env`.
 
 ## Setup
 

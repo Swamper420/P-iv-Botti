@@ -48,7 +48,6 @@ class BotConfig:
     mumble_password: str
     mumble_connect_timeout_seconds: int
     mumble_status_wait_seconds: int
-    mumble_target_channels: tuple[str, ...]
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -109,9 +108,4 @@ class BotConfig:
                 os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
             ),
             mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
-            mumble_target_channels=tuple(
-                channel.strip()
-                for channel in os.getenv("MUMBLE_TARGET_CHANNELS", "Channel 1,Channel 2").split(",")
-                if channel.strip()
-            ),
         )
