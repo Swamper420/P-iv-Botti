@@ -23,10 +23,6 @@ class ConfigTests(unittest.TestCase):
                 "STT_BACKEND_URL": "http://127.0.0.1:9000/transcribe",
                 "STT_TIMEOUT_SECONDS": "21",
                 "STT_MAX_AUDIO_SECONDS": "599",
-                "LINK_VIDEO_DOWNLOAD_ENABLED": "true",
-                "LINK_VIDEO_DOWNLOAD_TIMEOUT_SECONDS": "45",
-                "LINK_VIDEO_DOWNLOAD_MAX_FILESIZE_MB": "42",
-                "LINK_VIDEO_DOWNLOAD_MAX_HEIGHT": "360",
             },
             clear=False,
         ):
@@ -44,10 +40,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.stt_backend_url, "http://127.0.0.1:9000/transcribe")
         self.assertEqual(config.stt_timeout_seconds, 21)
         self.assertEqual(config.stt_max_audio_seconds, 599)
-        self.assertTrue(config.link_video_download_enabled)
-        self.assertEqual(config.link_video_download_timeout_seconds, 45)
-        self.assertEqual(config.link_video_download_max_filesize_mb, 42)
-        self.assertEqual(config.link_video_download_max_height, 360)
 
 
 if __name__ == "__main__":

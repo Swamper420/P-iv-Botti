@@ -42,10 +42,6 @@ class BotConfig:
     stt_backend_url: str
     stt_timeout_seconds: int
     stt_max_audio_seconds: int
-    link_video_download_enabled: bool
-    link_video_download_timeout_seconds: int
-    link_video_download_max_filesize_mb: int
-    link_video_download_max_height: int
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -98,17 +94,4 @@ class BotConfig:
             ).strip(),
             stt_timeout_seconds=int(os.getenv("STT_TIMEOUT_SECONDS", "30")),
             stt_max_audio_seconds=int(os.getenv("STT_MAX_AUDIO_SECONDS", "600")),
-            link_video_download_enabled=os.getenv(
-                "LINK_VIDEO_DOWNLOAD_ENABLED", "false"
-            ).strip().lower()
-            in {"1", "true", "yes", "on"},
-            link_video_download_timeout_seconds=int(
-                os.getenv("LINK_VIDEO_DOWNLOAD_TIMEOUT_SECONDS", "120")
-            ),
-            link_video_download_max_filesize_mb=int(
-                os.getenv("LINK_VIDEO_DOWNLOAD_MAX_FILESIZE_MB", "50")
-            ),
-            link_video_download_max_height=int(
-                os.getenv("LINK_VIDEO_DOWNLOAD_MAX_HEIGHT", "360")
-            ),
         )
