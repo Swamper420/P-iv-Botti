@@ -46,6 +46,13 @@ class WeatherLogicTests(unittest.TestCase):
             stt_backend_url="http://127.0.0.1:8081/transcribe",
             stt_timeout_seconds=30,
             stt_max_audio_seconds=600,
+            mumble_host="127.0.0.1",
+            mumble_port=64738,
+            mumble_username="status-bot",
+            mumble_password="secret",
+            mumble_connect_timeout_seconds=10,
+            mumble_status_wait_seconds=1,
+            mumble_target_channels=("Channel 1", "Channel 2"),
         )
 
         with (
