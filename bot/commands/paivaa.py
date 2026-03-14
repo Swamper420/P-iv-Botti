@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from socket import timeout as socket_timeout
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -15,6 +16,7 @@ LOGGER = logging.getLogger(__name__)
 AI_BACKEND_URL = "http://127.0.0.1:8080/query"
 MAX_REPLY_LENGTH = 5000
 AI_MAX_TOKENS = 650
+AI_BACKEND_TIMEOUT_SECONDS = 30
 
 
 async def _reply_in_chunks(update: Update, reply: str) -> None:
@@ -35,12 +37,13 @@ def _query_ai_backend(prompt: str) -> str:
         method="POST",
     )
 
-    with urlopen(request, timeout=30) as response:
+    with urlopen(request, timeout=AI_BACKEND_TIMEOUT_SECONDS) as response:
         response_body = response.read().decode("utf-8")
 
     try:
         parsed = json.loads(response_body)
     except json.JSONDecodeError:
+        LOGGER.warning("AI backend returned non-JSON response")
         return response_body.strip()
 
     if isinstance(parsed, str):
@@ -73,9 +76,9 @@ async def handle_paivaa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     try:
         ai_reply = await asyncio.to_thread(_query_ai_backend, prompt)
-    except (URLError, TimeoutError, OSError, ValueError) as error:
+    except (URLError, socket_timeout, TimeoutError, OSError):
         LOGGER.exception("Failed to query AI backend")
-        ai_reply = f"AI backend query failed: {error}"
+        ai_reply = "AI backend is temporarily unavailable. Please try again later."
 
     if not ai_reply:
         ai_reply = "AI backend returned an empty response."
