@@ -15,9 +15,9 @@ The bot replies to message text `Päivää` with:
 
 `Päivää *tips fedora*`
 
-The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend at
-`http://127.0.0.1:8080/query` with `max_tokens=650` and replies with the response. Long replies are
-split into multiple messages (5000 chars per message).
+The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend and replies
+with the response. `AI_BACKEND_URL`, `AI_MAX_TOKENS`, `AI_BACKEND_TIMEOUT_SECONDS`, and
+`MAX_REPLY_LENGTH` are configured through `.env` (`example.env` has defaults).
 
 ## Setup
 
@@ -30,7 +30,7 @@ split into multiple messages (5000 chars per message).
    ```bash
    cp example.env .env
    ```
-4. Set `TELEGRAM_BOT_TOKEN` in `.env`.
+4. Set `TELEGRAM_BOT_TOKEN` in `.env` (and optionally adjust AI backend settings).
 5. Run:
    ```bash
    python -m bot.main
