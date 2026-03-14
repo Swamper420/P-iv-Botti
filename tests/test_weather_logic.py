@@ -43,6 +43,9 @@ class WeatherLogicTests(unittest.TestCase):
             steam_cs2_rss_url="https://steamcommunity.com/games/csgo/rss/",
             steam_rss_poll_interval_seconds=300,
             steam_rss_request_timeout_seconds=30,
+            stt_backend_url="http://127.0.0.1:8081/transcribe",
+            stt_timeout_seconds=30,
+            stt_max_audio_seconds=600,
         )
 
         with (

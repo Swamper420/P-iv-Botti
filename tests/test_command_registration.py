@@ -33,6 +33,9 @@ class CommandRegistrationTests(unittest.TestCase):
             steam_cs2_rss_url="https://steamcommunity.com/games/csgo/rss/",
             steam_rss_poll_interval_seconds=300,
             steam_rss_request_timeout_seconds=30,
+            stt_backend_url="http://127.0.0.1:8081/transcribe",
+            stt_timeout_seconds=30,
+            stt_max_audio_seconds=600,
         )
 
     def test_registers_all_command_modules_with_message_filters(self) -> None:
@@ -43,17 +46,28 @@ class CommandRegistrationTests(unittest.TestCase):
         app = _DummyApplication()
         register_commands(app, self._config())
 
-        self.assertTrue({"aih", "help", "paivaa", "weather"}.issubset(discovered_names))
+        self.assertTrue({"aih", "help", "paivaa", "stt", "weather"}.issubset(discovered_names))
         self.assertEqual(len(app.handlers), expected_count)
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
-        self.assertTrue(all(isinstance(handler.filters, filters.Regex) for handler in app.handlers))
+        has_regex = any(isinstance(handler.filters, filters.Regex) for handler in app.handlers)
+        self.assertTrue(has_regex)
+        self.assertGreaterEqual(len(app.handlers), 1)
 
     def test_registers_specific_message_filters(self) -> None:
         app = _DummyApplication()
         register_commands(app, self._config())
 
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
-        self.assertTrue(all(isinstance(handler.filters, filters.Regex) for handler in app.handlers))
+        regex_handlers = [
+            handler for handler in app.handlers if isinstance(handler.filters, filters.Regex)
+        ]
+        non_regex_handlers = [
+            handler
+            for handler in app.handlers
+            if not isinstance(handler.filters, filters.Regex)
+        ]
+        self.assertGreaterEqual(len(regex_handlers), 1)
+        self.assertGreaterEqual(len(non_regex_handlers), 1)
 
 
 if __name__ == "__main__":

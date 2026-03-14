@@ -20,6 +20,9 @@ class ConfigTests(unittest.TestCase):
                 "STEAM_CS2_RSS_URL": "https://steam.example/rss",
                 "STEAM_RSS_POLL_INTERVAL_SECONDS": "123",
                 "STEAM_RSS_REQUEST_TIMEOUT_SECONDS": "9",
+                "STT_BACKEND_URL": "http://127.0.0.1:9000/transcribe",
+                "STT_TIMEOUT_SECONDS": "21",
+                "STT_MAX_AUDIO_SECONDS": "599",
             },
             clear=False,
         ):
@@ -34,6 +37,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.steam_cs2_rss_url, "https://steam.example/rss")
         self.assertEqual(config.steam_rss_poll_interval_seconds, 123)
         self.assertEqual(config.steam_rss_request_timeout_seconds, 9)
+        self.assertEqual(config.stt_backend_url, "http://127.0.0.1:9000/transcribe")
+        self.assertEqual(config.stt_timeout_seconds, 21)
+        self.assertEqual(config.stt_max_audio_seconds, 599)
 
 
 if __name__ == "__main__":
