@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect import signature
 from importlib import import_module
 from typing import TYPE_CHECKING
 from pkgutil import iter_modules
@@ -40,8 +41,11 @@ def register_commands(application: "Application", config: "BotConfig") -> None:
     command_usages = _discover_command_usages(modules)
 
     for module in modules:
-        register = getattr(module, "register")
-        if module.__name__.endswith(".help"):
-            register(application, config, command_usages)
+        register = getattr(module, "register", None)
+        if not callable(register):
+            continue
+        register_parameters = signature(register).parameters
+        if "command_usages" in register_parameters:
+            register(application, config, command_usages=command_usages)
         else:
             register(application, config)
