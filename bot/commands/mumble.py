@@ -74,6 +74,25 @@ def _drain_persistent_tele_messages() -> list[tuple[str, str]]:
         return messages
 
 
+def _build_persistent_tele_message_callback(mumble: object) -> Callable[[object], None]:
+    def _handle_persistent_tele_message(message: object) -> None:
+        message_text = extract_mumble_tele_message(str(getattr(message, "message", "")))
+        if message_text is None:
+            return
+
+        actor_session = getattr(message, "actor", None)
+        actor_name = "tuntematon"
+        users = getattr(mumble, "users", {})
+        if isinstance(actor_session, int) and hasattr(users, "get"):
+            actor = users.get(actor_session)
+            if actor is not None:
+                actor_name = str(actor.get("name", actor_name))
+
+        _queue_persistent_tele_message(actor_name, message_text)
+
+    return _handle_persistent_tele_message
+
+
 def _reset_persistent_mumble_connection() -> None:
     global _PERSISTENT_MUMBLE
     with _PERSISTENT_MUMBLE_LOCK:
@@ -246,7 +265,7 @@ def _collect_mumble_snapshot(
 
                         add_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, _handle_text_message)
                     except Exception:
-                            LOGGER.warning("Failed to register mumble text message callback", exc_info=True)
+                        LOGGER.warning("Failed to register mumble text message callback", exc_info=True)
 
             time.sleep(max(config.mumble_status_wait_seconds, 0))
             return _build_snapshot_from_connected_mumble(
@@ -358,22 +377,10 @@ def _collect_monitored_snapshot(config: BotConfig) -> dict[str, object]:
                 callback_manager = getattr(mumble, "callbacks", None)
                 add_callback = getattr(callback_manager, "add_callback", None)
                 if callable(add_callback):
-                    def _handle_text_message(message: object) -> None:
-                        message_text = extract_mumble_tele_message(str(getattr(message, "message", "")))
-                        if message_text is None:
-                            return
-
-                        actor_session = getattr(message, "actor", None)
-                        actor_name = "tuntematon"
-                        users = getattr(mumble, "users", {})
-                        if isinstance(actor_session, int) and hasattr(users, "get"):
-                            actor = users.get(actor_session)
-                            if actor is not None:
-                                actor_name = str(actor.get("name", actor_name))
-
-                        _queue_persistent_tele_message(actor_name, message_text)
-
-                    add_callback(PYMUMBLE_CLBK_TEXTMESSAGERECEIVED, _handle_text_message)
+                    add_callback(
+                        PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
+                        _build_persistent_tele_message_callback(mumble),
+                    )
 
             with _PERSISTENT_MUMBLE_LOCK:
                 previous = _PERSISTENT_MUMBLE
