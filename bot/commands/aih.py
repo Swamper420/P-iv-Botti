@@ -79,5 +79,5 @@ def _build_handler(
 
 def register(application: Application, config: BotConfig) -> None:
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, _build_handler(config))
+        MessageHandler(filters.Regex(r"(?i)^\s*aih:"), _build_handler(config))
     )

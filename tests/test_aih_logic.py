@@ -16,6 +16,9 @@ class AihLogicTests(unittest.TestCase):
     def test_does_not_extract_empty_aih_prompt(self) -> None:
         self.assertIsNone(get_aih_prompt("aih:   "))
 
+    def test_does_not_extract_from_none(self) -> None:
+        self.assertIsNone(get_aih_prompt(None))
+
 
 if __name__ == "__main__":
     unittest.main()

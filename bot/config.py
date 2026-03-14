@@ -29,6 +29,12 @@ class BotConfig:
     ai_backend_url: str
     ai_max_tokens: int
     ai_backend_timeout_seconds: int
+    openweather_api_key: str
+    weathercam_stations_url: str
+    weathercam_image_base_url: str
+    openweather_current_url: str
+    weather_api_timeout_seconds: int
+    digitraffic_user: str
     max_reply_length: int
 
     @classmethod
@@ -51,5 +57,21 @@ class BotConfig:
             ai_backend_url=os.getenv("AI_BACKEND_URL", "http://127.0.0.1:8080/query").strip(),
             ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "650")),
             ai_backend_timeout_seconds=int(os.getenv("AI_BACKEND_TIMEOUT_SECONDS", "30")),
+            openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
+            weathercam_stations_url=os.getenv(
+                "WEATHERCAM_STATIONS_URL",
+                "https://tie.digitraffic.fi/api/weathercam/v1/stations",
+            ).strip(),
+            weathercam_image_base_url=os.getenv(
+                "WEATHERCAM_IMAGE_BASE_URL", "https://weathercam.digitraffic.fi"
+            ).strip(),
+            openweather_current_url=os.getenv(
+                "OPENWEATHER_CURRENT_URL",
+                "https://api.openweathermap.org/data/2.5/weather",
+            ).strip(),
+            weather_api_timeout_seconds=int(
+                os.getenv("WEATHER_API_TIMEOUT_SECONDS", "30")
+            ),
+            digitraffic_user=os.getenv("DIGITRAFFIC_USER", "telegram-bot-1.0").strip(),
             max_reply_length=int(os.getenv("MAX_REPLY_LENGTH", "5000")),
         )

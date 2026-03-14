@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 def register_commands(application: "Application", config: "BotConfig") -> None:
     from bot.commands.aih import register as register_aih
     from bot.commands.paivaa import register as register_paivaa
+    from bot.commands.weather import register as register_weather
 
     register_paivaa(application, config)
     register_aih(application, config)
+    register_weather(application, config)
