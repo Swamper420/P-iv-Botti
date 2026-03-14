@@ -101,7 +101,7 @@ class MumbleCommandAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(monitor_callback))
 
         with patch(
-            "bot.commands.mumble._collect_mumble_snapshot",
+            "bot.commands.mumble._collect_monitored_snapshot",
             return_value={
                 "server_address": "127.0.0.1:64738",
                 "channels": [],
