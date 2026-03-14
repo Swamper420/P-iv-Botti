@@ -36,7 +36,9 @@ class BotConfig:
         if not token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required")
 
-        storage_dir = Path(os.getenv("STORAGE_DIR", project_root / "storage")).resolve()
+        storage_dir = Path(
+            os.getenv("STORAGE_DIR", str(project_root / "storage"))
+        ).resolve()
         storage_dir.mkdir(parents=True, exist_ok=True)
 
         return cls(telegram_bot_token=token, storage_dir=storage_dir)
