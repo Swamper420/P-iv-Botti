@@ -12,9 +12,9 @@ Async and modular Telegram bot skeleton.
 
 ## Current behavior
 
-The bot replies to message text `Päivää` with:
-
-`Päivää *tips fedora*`
+The bot replies to message text `Päivää` with an AI-generated, deliberately over-the-top cringe uwu greeting.
+The latest four generated `Päivää` replies are persisted under `storage/` and used to avoid repeating recent
+responses.
 
 The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend and replies
 with the response. `AI_BACKEND_URL`, `AI_MAX_TOKENS`, `AI_BACKEND_TIMEOUT_SECONDS`, and
