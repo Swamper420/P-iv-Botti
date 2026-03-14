@@ -6,11 +6,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 from urllib.error import URLError
 from urllib.request import urlopen
 
 from bot.active_chats import load_active_chat_ids
 from bot.config import BotConfig
+
+if TYPE_CHECKING:
+    from telegram.ext import Application
 
 LOGGER = logging.getLogger(__name__)
 
@@ -86,7 +90,7 @@ class Cs2RssNotifier:
         self._seen_initialized = False
         self._task: asyncio.Task[None] | None = None
 
-    def start(self, app) -> None:
+    def start(self, app: "Application") -> None:
         if self._task is not None:
             return
         self._task = app.create_task(self._run(app))
@@ -101,7 +105,7 @@ class Cs2RssNotifier:
             pass
         self._task = None
 
-    async def _run(self, app) -> None:
+    async def _run(self, app: "Application") -> None:
         while True:
             await self.check_updates(app)
             await asyncio.sleep(self._config.steam_rss_poll_interval_seconds)
@@ -114,16 +118,18 @@ class Cs2RssNotifier:
             ) as response:
                 status = getattr(response, "status", 200)
                 if status != 200:
-                    raise RuntimeError(f"Steam RSS returned status {status}")
+                    LOGGER.warning("Steam RSS returned status %s", status)
+                    return ""
                 return response.read().decode("utf-8")
 
         try:
-            return await asyncio.to_thread(_fetch)
-        except (URLError, TimeoutError, OSError, RuntimeError):
+            rss_xml = await asyncio.to_thread(_fetch)
+        except (URLError, TimeoutError, OSError):
             LOGGER.exception("Failed to fetch Steam RSS feed")
             return None
+        return rss_xml or None
 
-    async def check_updates(self, app) -> None:
+    async def check_updates(self, app: "Application") -> None:
         rss_xml = await self._fetch_rss()
         if rss_xml is None:
             return

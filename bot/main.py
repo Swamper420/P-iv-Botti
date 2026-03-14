@@ -25,8 +25,7 @@ def main() -> None:
     async def _start_background_tasks(application: Application) -> None:
         cs2_notifier.start(application)
 
-    async def _stop_background_tasks(application: Application) -> None:
-        del application
+    async def _stop_background_tasks(_application: Application) -> None:
         await cs2_notifier.stop()
 
     app = (
