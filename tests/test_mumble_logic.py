@@ -20,7 +20,6 @@ class MumbleLogicTests(unittest.TestCase):
     def test_formats_status_report_for_channels_and_users(self) -> None:
         report = format_mumble_status_report(
             server_address="127.0.0.1:64738",
-            expected_channel_count=2,
             channels=[
                 {
                     "name": "Alpha",
@@ -46,10 +45,12 @@ class MumbleLogicTests(unittest.TestCase):
         )
 
         self.assertIn("Mumble (127.0.0.1:64738)", report)
+        self.assertIn("Kanavia seurannassa: 2", report)
         self.assertIn("• Alpha (1 käyttäjää)", report)
         self.assertIn("online=00:01:05, idle=00:00:05", report)
         self.assertIn("extra: hash=abc", report)
         self.assertIn("• Beta (0 käyttäjää)", report)
+        self.assertNotIn("MUMBLE_TARGET_CHANNELS", report)
 
 
 if __name__ == "__main__":

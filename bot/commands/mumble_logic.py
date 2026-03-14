@@ -26,14 +26,8 @@ def format_mumble_status_report(
     *,
     server_address: str,
     channels: list[dict[str, object]],
-    expected_channel_count: int,
 ) -> str:
     lines = [f"🎧 Mumble ({server_address})", f"Kanavia seurannassa: {len(channels)}"]
-
-    if len(channels) < expected_channel_count:
-        lines.append(
-            f"⚠️ Kanavia löytyi vain {len(channels)} / {expected_channel_count}. Tarkista MUMBLE_TARGET_CHANNELS."
-        )
 
     for channel in channels:
         channel_name = str(channel.get("name", "Tuntematon kanava"))

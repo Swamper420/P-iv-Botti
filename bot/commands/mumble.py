@@ -32,12 +32,6 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
     if not config.mumble_password:
         raise RuntimeError("MUMBLE_PASSWORD puuttuu.")
 
-    target_channels = set(channel.casefold() for channel in config.mumble_target_channels)
-    if len(target_channels) < 2:
-        raise RuntimeError(
-            "MUMBLE_TARGET_CHANNELS vaatii vähintään kaksi kanavaa (ominaisuusvaatimus)."
-        )
-
     mumble = pymumble_py3.Mumble(
         config.mumble_host,
         config.mumble_username,
@@ -54,7 +48,9 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
             state = getattr(mumble, "connected", None)
             if state == PYMUMBLE_CONN_STATE_CONNECTED:
                 break
-            if state in {PYMUMBLE_CONN_STATE_FAILED, PYMUMBLE_CONN_STATE_NOT_CONNECTED}:
+            if state == PYMUMBLE_CONN_STATE_FAILED:
+                raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
+            if state not in {None, PYMUMBLE_CONN_STATE_NOT_CONNECTED}:
                 raise RuntimeError("Yhteys Mumble-palvelimeen epäonnistui.")
             if time.monotonic() >= deadline:
                 raise socket_timeout("Mumble-yhteys aikakatkesi.")
@@ -74,8 +70,6 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
         for channel in sorted(channels, key=lambda item: str(item.get("name", "")).casefold()):
             channel_id = channel.get("channel_id")
             channel_name = str(channel.get("name", "Tuntematon kanava"))
-            if channel_name.casefold() not in target_channels:
-                continue
 
             channel_users: list[dict[str, object]] = []
             for user in users:
@@ -126,7 +120,6 @@ def _collect_mumble_snapshot(config: BotConfig) -> dict[str, object]:
         return {
             "server_address": f"{config.mumble_host}:{config.mumble_port}",
             "channels": output_channels,
-            "expected_channel_count": len(target_channels),
         }
     finally:
         try:
@@ -160,13 +153,12 @@ def _build_handler(
             reply = format_mumble_status_report(
                 server_address=str(snapshot["server_address"]),
                 channels=list(snapshot["channels"]),
-                expected_channel_count=int(snapshot["expected_channel_count"]),
             )
         except (RuntimeError, socket_timeout, TimeoutError, OSError):
             LOGGER.exception("Mumble status check failed")
             reply = (
                 "Mumble-tilan haku epäonnistui. Varmista MUMBLE_* asetukset "
-                "(host, käyttäjä, salasana ja kanavat)."
+                "(host, käyttäjä ja salasana)."
             )
 
         await reply_in_chunks(update, reply, config.max_reply_length)

@@ -42,7 +42,6 @@ class CommandRegistrationTests(unittest.TestCase):
             mumble_password="secret",
             mumble_connect_timeout_seconds=10,
             mumble_status_wait_seconds=1,
-            mumble_target_channels=("Channel 1", "Channel 2"),
         )
 
     def test_registers_all_command_modules_with_message_filters(self) -> None:
