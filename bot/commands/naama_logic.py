@@ -23,6 +23,21 @@ _COCO_RIGHT_SHOULDER_INDEX = 6
 _COCO_LEFT_WRIST_INDEX = 9
 _COCO_RIGHT_WRIST_INDEX = 10
 _KEYPOINT_MIN_CONFIDENCE = 0.2
+_HEAD_WIDTH_MAX_RATIO = 0.9
+_HEAD_WIDTH_MIN_RATIO = 0.28
+_HEAD_WIDTH_SHOULDER_RATIO = 0.72
+_DEFAULT_MOUTH_Y_RATIO = 0.45
+_MOUTH_WIDTH_MIN_RATIO = 0.14
+_MOUTH_WIDTH_SHOULDER_RATIO = 0.26
+_MOUTH_Y_OFFSET_MIN = 2.0
+_MOUTH_Y_OFFSET_HEAD_RATIO = 0.38
+_HAND_WIDTH_MIN_RATIO = 0.14
+_HAND_WIDTH_SHOULDER_RATIO = 0.22
+_LEFT_HAND_FALLBACK_X_RATIO = 0.2
+_RIGHT_HAND_FALLBACK_X_RATIO = 0.8
+_HAND_FALLBACK_Y_RATIO = 0.63
+_BODY_WIDTH_MIN_RATIO = 0.65
+_BODY_WIDTH_SHOULDER_RATIO = 1.15
 _BODY_CENTER_BELOW_SHOULDERS_RATIO = 0.33
 _BODY_CENTER_FALLBACK_OFFSET_RATIO = 0.16
 _HAT_ROTATION_SCALE = 0.45
@@ -339,27 +354,86 @@ def _build_naama_anchors(
             shoulder_span, abs(float(right_shoulder[0]) - float(left_shoulder[0]))
         )
 
-    head_width = max(1, int(round(min(person_width * 0.9, max(person_width * 0.28, shoulder_span * 0.72)))))
-    mouth_width = max(1, int(round(max(person_width * 0.14, shoulder_span * 0.26))))
-    hand_box_width = max(1, int(round(max(person_width * 0.14, shoulder_span * 0.22))))
-    body_width = max(1, int(round(max(person_width * 0.65, shoulder_span * 1.15))))
+    head_width = max(
+        1,
+        int(
+            round(
+                min(
+                    person_width * _HEAD_WIDTH_MAX_RATIO,
+                    max(
+                        person_width * _HEAD_WIDTH_MIN_RATIO,
+                        shoulder_span * _HEAD_WIDTH_SHOULDER_RATIO,
+                    ),
+                )
+            )
+        ),
+    )
+    mouth_width = max(
+        1,
+        int(
+            round(
+                max(
+                    person_width * _MOUTH_WIDTH_MIN_RATIO,
+                    shoulder_span * _MOUTH_WIDTH_SHOULDER_RATIO,
+                )
+            )
+        ),
+    )
+    hand_box_width = max(
+        1,
+        int(
+            round(
+                max(
+                    person_width * _HAND_WIDTH_MIN_RATIO,
+                    shoulder_span * _HAND_WIDTH_SHOULDER_RATIO,
+                )
+            )
+        ),
+    )
+    body_width = max(
+        1,
+        int(
+            round(
+                max(
+                    person_width * _BODY_WIDTH_MIN_RATIO,
+                    shoulder_span * _BODY_WIDTH_SHOULDER_RATIO,
+                )
+            )
+        ),
+    )
 
-    default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=0.45)
+    default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=_DEFAULT_MOUTH_Y_RATIO)
     if nose is not None:
-        mouth = (nose[0], int(round(nose[1] + max(2.0, head_width * 0.38))))
+        mouth = (
+            nose[0],
+            int(round(nose[1] + max(_MOUTH_Y_OFFSET_MIN, head_width * _MOUTH_Y_OFFSET_HEAD_RATIO))),
+        )
     else:
         mouth = default_mouth
     mouth = _clamp_point(mouth, left=left, top=top, right=right, bottom=bottom)
 
-    left_hand = left_wrist if left_wrist is not None else _mask_point(person_mask, x_ratio=0.2, y_ratio=0.63)
+    left_hand = (
+        left_wrist
+        if left_wrist is not None
+        else _mask_point(
+            person_mask, x_ratio=_LEFT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
+        )
+    )
     right_hand = (
-        right_wrist if right_wrist is not None else _mask_point(person_mask, x_ratio=0.8, y_ratio=0.63)
+        right_wrist
+        if right_wrist is not None
+        else _mask_point(
+            person_mask, x_ratio=_RIGHT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
+        )
     )
     left_hand = _clamp_point(left_hand, left=left, top=top, right=right, bottom=bottom)
     right_hand = _clamp_point(right_hand, left=left, top=top, right=right, bottom=bottom)
-    hands_angle = math.degrees(
-        math.atan2(float(right_hand[1] - left_hand[1]), float(right_hand[0] - left_hand[0]))
-    )
+    if left_hand == right_hand:
+        hands_angle = 0.0
+    else:
+        hands_angle = math.degrees(
+            math.atan2(float(right_hand[1] - left_hand[1]), float(right_hand[0] - left_hand[0]))
+        )
 
     if left_shoulder is not None and right_shoulder is not None:
         shoulder_angle = math.degrees(
