@@ -609,6 +609,9 @@ async def start_background_monitor(application: Application, config: BotConfig) 
 
     job_queue = getattr(application, "job_queue", None)
     if job_queue is not None and callable(getattr(job_queue, "run_repeating", None)):
+        if config.mumble_startup_delay_seconds > 0:
+            await asyncio.sleep(config.mumble_startup_delay_seconds)
+        await _refresh_monitored_snapshot(application, config)
         return
 
     with _MONITOR_FALLBACK_TASK_LOCK:

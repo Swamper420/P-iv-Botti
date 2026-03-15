@@ -49,6 +49,7 @@ class BotConfig:
     mumble_connect_timeout_seconds: int
     mumble_status_wait_seconds: int
     mumble_monitor_interval_seconds: int
+    mumble_startup_delay_seconds: int
     mumble_connect_retries: int = 2
     mumble_tele_chat_id: int | None = None
 
@@ -70,6 +71,11 @@ class BotConfig:
         )
         if mumble_monitor_interval_seconds < 1:
             raise ValueError("MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1")
+        mumble_startup_delay_seconds = int(
+            os.getenv("MUMBLE_STARTUP_DELAY_SECONDS", "2")
+        )
+        if mumble_startup_delay_seconds < 0:
+            raise ValueError("MUMBLE_STARTUP_DELAY_SECONDS must be >= 0")
         mumble_connect_retries = int(os.getenv("MUMBLE_CONNECT_RETRIES", "2"))
         if mumble_connect_retries < 1:
             raise ValueError("MUMBLE_CONNECT_RETRIES must be >= 1")
@@ -124,5 +130,6 @@ class BotConfig:
             mumble_connect_retries=mumble_connect_retries,
             mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
             mumble_monitor_interval_seconds=mumble_monitor_interval_seconds,
+            mumble_startup_delay_seconds=mumble_startup_delay_seconds,
             mumble_tele_chat_id=mumble_tele_chat_id,
         )
