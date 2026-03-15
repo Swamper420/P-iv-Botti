@@ -103,17 +103,17 @@ class BotConfig:
         if deepfry_max_image_bytes < 1:
             raise ValueError("DEEPFRY_MAX_IMAGE_BYTES must be >= 1")
         naama_confidence_threshold = float(
-            os.getenv("NAAMA_CONFIDENCE_THRESHOLD", str(deepfry_confidence_threshold))
+            os.getenv("NAAMA_CONFIDENCE_THRESHOLD", "0.15")
         )
         if not 0 <= naama_confidence_threshold <= 1:
             raise ValueError("NAAMA_CONFIDENCE_THRESHOLD must be between 0 and 1")
         naama_mask_threshold = float(
-            os.getenv("NAAMA_MASK_THRESHOLD", str(deepfry_mask_threshold))
+            os.getenv("NAAMA_MASK_THRESHOLD", "0.35")
         )
         if not 0 <= naama_mask_threshold <= 1:
             raise ValueError("NAAMA_MASK_THRESHOLD must be between 0 and 1")
         naama_max_image_bytes = int(
-            os.getenv("NAAMA_MAX_IMAGE_BYTES", str(deepfry_max_image_bytes))
+            os.getenv("NAAMA_MAX_IMAGE_BYTES", "10000000")
         )
         if naama_max_image_bytes < 1:
             raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
@@ -175,9 +175,7 @@ class BotConfig:
             deepfry_confidence_threshold=deepfry_confidence_threshold,
             deepfry_mask_threshold=deepfry_mask_threshold,
             deepfry_max_image_bytes=deepfry_max_image_bytes,
-            naama_model_name=os.getenv(
-                "NAAMA_MODEL_NAME", os.getenv("DEEPFRY_MODEL_NAME", "yolo26n-seg.pt")
-            ).strip(),
+            naama_model_name=os.getenv("NAAMA_MODEL_NAME", "yolo26n-seg.pt").strip(),
             naama_confidence_threshold=naama_confidence_threshold,
             naama_mask_threshold=naama_mask_threshold,
             naama_max_image_bytes=naama_max_image_bytes,
