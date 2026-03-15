@@ -5,7 +5,6 @@ import math
 import random
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -14,85 +13,27 @@ import numpy as np
 from PIL import Image, ImageOps
 
 LOGGER = logging.getLogger(__name__)
+
 _PERSON_CLASS_ID = 0
 _ACCESSORY_NAMES = ("hat", "cigar", "sun")
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-_COCO_NOSE_INDEX = 0
-_COCO_LEFT_EYE_INDEX = 1
-_COCO_RIGHT_EYE_INDEX = 2
-_COCO_LEFT_SHOULDER_INDEX = 5
-_COCO_RIGHT_SHOULDER_INDEX = 6
-_KEYPOINT_MIN_CONFIDENCE = 0.2
-_HEAD_WIDTH_MAX_RATIO = 0.9
-_HEAD_WIDTH_MIN_RATIO = 0.28
-_HEAD_WIDTH_SHOULDER_RATIO = 0.72
-_DEFAULT_MOUTH_Y_RATIO = 0.45
-_MOUTH_WIDTH_MIN_RATIO = 0.14
-_MOUTH_WIDTH_SHOULDER_RATIO = 0.26
-_MOUTH_Y_OFFSET_MIN = 2.0
-_MOUTH_Y_OFFSET_HEAD_RATIO = 0.38
+_KEYPOINT_MIN_CONFIDENCE = 0.4
+
+# Depth settings
 _DEPTH_SCALE_RATIO = 0.86
 _DEPTH_BOTTOM_MARGIN_RATIO = 0.02
-_HAT_ROTATION_SCALE = 0.45
-_CIGAR_ROTATION_SCALE = 0.75
+
+# YOLO caching to prevent reloading models in memory
 _MODEL_CACHE: dict[str, Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
-_MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
 
 
-@dataclass(frozen=True)
-class _NaamaAnchors:
-    top_head: tuple[int, int]
-    mouth: tuple[int, int]
-    head_angle_degrees: float
-    head_width: int
-    mouth_width: int
-
-
-@dataclass(frozen=True)
-class _PersonDetection:
-    mask: np.ndarray
-    left: int
-    top: int
-    right: int
-    bottom: int
-
-    @property
-    def width(self) -> int:
-        return max(1, self.right - self.left + 1)
-
-    @property
-    def height(self) -> int:
-        return max(1, self.bottom - self.top + 1)
-
-
-def _default_model_loader(model_name: str) -> Any:
-    from ultralytics import YOLO
-
-    return YOLO(model_name)
-
-
-def _get_model(model_name: str, model_loader: Callable[[str], Any] | None) -> Any:
-    if model_loader is not None:
-        return model_loader(model_name)
-
+def _get_model(model_name: str) -> Any:
     with _MODEL_CACHE_LOCK:
-        cached = _MODEL_CACHE.get(model_name)
-        if cached is not None:
-            return cached
-        load_lock = _MODEL_LOAD_LOCKS.setdefault(model_name, threading.Lock())
-
-    with load_lock:
-        with _MODEL_CACHE_LOCK:
-            cached = _MODEL_CACHE.get(model_name)
-            if cached is not None:
-                return cached
-
-        model = _default_model_loader(model_name)
-
-        with _MODEL_CACHE_LOCK:
-            _MODEL_CACHE[model_name] = model
-            return model
+        if model_name not in _MODEL_CACHE:
+            from ultralytics import YOLO
+            _MODEL_CACHE[model_name] = YOLO(model_name)
+        return _MODEL_CACHE[model_name]
 
 
 def _encode_png(image: Image.Image) -> bytes:
@@ -101,340 +42,65 @@ def _encode_png(image: Image.Image) -> bytes:
     return output.getvalue()
 
 
-def _mask_to_bool(mask: object, *, height: int, width: int, threshold: float) -> np.ndarray | None:
-    value: Any = mask
-    cpu_fn = getattr(value, "cpu", None)
-    if callable(cpu_fn):
-        value = cpu_fn()
-    numpy_fn = getattr(value, "numpy", None)
-    if callable(numpy_fn):
-        value = numpy_fn()
-
-    try:
-        mask_array = np.asarray(value, dtype=np.float32)
-    except (TypeError, ValueError):
-        return None
-
-    if mask_array.ndim != 2:
-        return None
-
-    if mask_array.shape != (height, width):
-        resized = Image.fromarray((mask_array * 255).astype(np.uint8), mode="L").resize(
-            (width, height), Image.Resampling.NEAREST
-        )
-        mask_array = np.asarray(resized, dtype=np.float32) / 255.0
-
-    return mask_array > threshold
-
-
-def _extract_person_detection(
-    image_rgb: np.ndarray,
-    *,
-    model_name: str,
-    confidence_threshold: float,
-    mask_threshold: float,
-    model_loader: Callable[[str], Any] | None,
-) -> _PersonDetection | None:
-    try:
-        model = _get_model(model_name, model_loader)
-        results = model.predict(
-            source=image_rgb,
-            task="segment",
-            device="cpu",
-            conf=max(0.0, min(confidence_threshold, 1.0)),
-            verbose=False,
-        )
-    except Exception:
-        LOGGER.exception("Naama image segmentation failed")
-        return None
-
-    if not isinstance(results, (list, tuple)) or len(results) == 0:
-        return None
-
-    first_result = results[0]
-    masks_data = getattr(getattr(first_result, "masks", None), "data", None)
-    class_values = getattr(getattr(first_result, "boxes", None), "cls", None)
-    if masks_data is None or class_values is None:
-        return None
-
-    try:
-        class_ids = np.asarray(class_values, dtype=np.float32).astype(np.int32).tolist()
-    except (TypeError, ValueError):
-        return None
-
-    safe_mask_threshold = max(0.0, min(mask_threshold, 1.0))
-    image_height, image_width = image_rgb.shape[:2]
-    candidate_detections: list[_PersonDetection] = []
-    boxes_xyxy = getattr(getattr(first_result, "boxes", None), "xyxy", None)
-    boxes_value: Any = boxes_xyxy
-    cpu_fn = getattr(boxes_value, "cpu", None)
-    if callable(cpu_fn):
-        boxes_value = cpu_fn()
-    numpy_fn = getattr(boxes_value, "numpy", None)
-    if callable(numpy_fn):
-        boxes_value = numpy_fn()
-    try:
-        boxes_array = np.asarray(boxes_value, dtype=np.float32)
-    except (TypeError, ValueError):
-        boxes_array = np.empty((0, 4), dtype=np.float32)
-
-    for index, raw_mask in enumerate(masks_data):
-        if index >= len(class_ids) or class_ids[index] != _PERSON_CLASS_ID:
-            continue
-        mask = _mask_to_bool(
-            raw_mask, height=image_height, width=image_width, threshold=safe_mask_threshold
-        )
-        if mask is None or not mask.any():
-            continue
-
-        y_coords, x_coords = np.where(mask)
-        left = int(x_coords.min())
-        right = int(x_coords.max())
-        top = int(y_coords.min())
-        bottom = int(y_coords.max())
-        if boxes_array.ndim == 2 and boxes_array.shape[1] >= 4 and index < boxes_array.shape[0]:
-            raw_box = boxes_array[index]
-            box_left = max(0, min(image_width - 1, int(round(float(raw_box[0])))))
-            box_top = max(0, min(image_height - 1, int(round(float(raw_box[1])))))
-            box_right = max(0, min(image_width - 1, int(round(float(raw_box[2])))))
-            box_bottom = max(0, min(image_height - 1, int(round(float(raw_box[3])))))
-            if box_right > box_left and box_bottom > box_top:
-                left, top, right, bottom = box_left, box_top, box_right, box_bottom
-        candidate_detections.append(
-            _PersonDetection(mask=mask, left=left, top=top, right=right, bottom=bottom)
-        )
-
-    if not candidate_detections:
-        return None
-
-    return max(candidate_detections, key=lambda detection: int(np.count_nonzero(detection.mask)))
-
-
-def _derive_pose_model_name(segmentation_model_name: str) -> str:
-    lower_name = segmentation_model_name.lower()
-    if "-seg" in lower_name:
-        start_index = lower_name.index("-seg")
-        return segmentation_model_name[:start_index] + "-pose" + segmentation_model_name[start_index + 4 :]
-    return segmentation_model_name
-
-
-def _extract_pose_keypoints(
-    image_rgb: np.ndarray,
-    *,
-    model_name: str,
-    confidence_threshold: float,
-    model_loader: Callable[[str], Any] | None,
-) -> np.ndarray | None:
-    pose_model_name = _derive_pose_model_name(model_name)
-    try:
-        model = _get_model(pose_model_name, model_loader)
-        results = model.predict(
-            source=image_rgb,
-            task="pose",
-            device="cpu",
-            conf=max(0.0, min(confidence_threshold, 1.0)),
-            verbose=False,
-        )
-    except Exception:
-        LOGGER.debug("Naama pose detection failed", exc_info=True)
-        return None
-
-    if not isinstance(results, (list, tuple)) or len(results) == 0:
-        return None
-
-    keypoints_data = getattr(getattr(results[0], "keypoints", None), "data", None)
-    if keypoints_data is None:
-        return None
-
-    value: Any = keypoints_data
-    cpu_fn = getattr(value, "cpu", None)
-    if callable(cpu_fn):
-        value = cpu_fn()
-    numpy_fn = getattr(value, "numpy", None)
-    if callable(numpy_fn):
-        value = numpy_fn()
-
-    try:
-        keypoints_array = np.asarray(value, dtype=np.float32)
-    except (TypeError, ValueError):
-        return None
-
-    if keypoints_array.ndim == 2:
-        keypoints_array = keypoints_array[np.newaxis, ...]
-    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_EYE_INDEX:
-        return None
-    if keypoints_array.shape[2] < 2:
-        return None
-
-    return keypoints_array
-
-
-def _mask_point(mask: np.ndarray, x_ratio: float, y_ratio: float) -> tuple[int, int]:
-    y_coords, x_coords = np.where(mask)
-    left, right = int(x_coords.min()), int(x_coords.max())
-    top, bottom = int(y_coords.min()), int(y_coords.max())
-    width = max(1, right - left + 1)
-    height = max(1, bottom - top + 1)
-    point_x = left + int(round(width * x_ratio))
-    point_y = top + int(round(height * y_ratio))
-    return point_x, point_y
-
-
-def _clamp_point(
-    point: tuple[int, int], *, left: int, top: int, right: int, bottom: int
-) -> tuple[int, int]:
-    return (
-        min(max(point[0], left), right),
-        min(max(point[1], top), bottom),
-    )
-
-
-def _extract_anchor_from_keypoints(
-    keypoints: np.ndarray | None, keypoint_index: int
-) -> tuple[int, int] | None:
+def _get_keypoint(keypoints: np.ndarray, index: int) -> tuple[int, int] | None:
     if keypoints is None or keypoints.shape[0] == 0:
         return None
-
-    person_points = keypoints[0]
-    if person_points.shape[0] <= keypoint_index:
-        return None
-
-    point = person_points[keypoint_index]
-    confidence = float(point[2]) if point.shape[0] > 2 else 1.0
+    pt = keypoints[0][index]
+    confidence = float(pt[2]) if pt.shape[0] > 2 else 1.0
     if confidence < _KEYPOINT_MIN_CONFIDENCE:
         return None
-
-    return int(round(float(point[0]))), int(round(float(point[1])))
-
-
-def _build_naama_anchors(
-    person_mask: np.ndarray, person_detection: _PersonDetection, pose_keypoints: np.ndarray | None
-) -> _NaamaAnchors:
-    left, top, right, bottom = (
-        person_detection.left,
-        person_detection.top,
-        person_detection.right,
-        person_detection.bottom,
-    )
-    person_width = person_detection.width
-    person_height = person_detection.height
-    shoulder_span = max(1.0, float(person_width) * 0.35)
-
-    y_coords, x_coords = np.where(person_mask)
-    top_band = y_coords <= (top + max(1, int(person_height * 0.08)))
-    top_x_values = x_coords[top_band] if np.any(top_band) else x_coords
-    top_head_x = int(np.median(top_x_values))
-    top_head = (top_head_x, top)
-
-    nose = _extract_anchor_from_keypoints(pose_keypoints, _COCO_NOSE_INDEX)
-    left_eye = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_EYE_INDEX)
-    right_eye = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_EYE_INDEX)
-    left_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_SHOULDER_INDEX)
-    right_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_SHOULDER_INDEX)
-
-    if left_shoulder is not None and right_shoulder is not None:
-        shoulder_span = max(
-            shoulder_span, abs(float(right_shoulder[0]) - float(left_shoulder[0]))
-        )
-
-    head_width = max(
-        1,
-        int(
-            round(
-                min(
-                    person_width * _HEAD_WIDTH_MAX_RATIO,
-                    max(
-                        person_width * _HEAD_WIDTH_MIN_RATIO,
-                        shoulder_span * _HEAD_WIDTH_SHOULDER_RATIO,
-                    ),
-                )
-            )
-        ),
-    )
-    mouth_width = max(
-        1,
-        int(
-            round(
-                max(
-                    person_width * _MOUTH_WIDTH_MIN_RATIO,
-                    shoulder_span * _MOUTH_WIDTH_SHOULDER_RATIO,
-                )
-            )
-        ),
-    )
-
-    default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=_DEFAULT_MOUTH_Y_RATIO)
-    if nose is not None:
-        mouth = (
-            nose[0],
-            int(round(nose[1] + max(_MOUTH_Y_OFFSET_MIN, head_width * _MOUTH_Y_OFFSET_HEAD_RATIO))),
-        )
-    else:
-        mouth = default_mouth
-    mouth = _clamp_point(mouth, left=left, top=top, right=right, bottom=bottom)
-
-    if left_eye is not None and right_eye is not None:
-        head_angle = math.degrees(
-            math.atan2(
-                float(right_eye[1] - left_eye[1]),
-                float(right_eye[0] - left_eye[0]),
-            )
-        )
-    elif left_shoulder is not None and right_shoulder is not None:
-        head_angle = math.degrees(
-            math.atan2(
-                float(right_shoulder[1] - left_shoulder[1]),
-                float(right_shoulder[0] - left_shoulder[0]),
-            )
-        )
-    else:
-        head_angle = 0.0
-
-    return _NaamaAnchors(
-        top_head=top_head,
-        mouth=mouth,
-        head_angle_degrees=head_angle,
-        head_width=head_width,
-        mouth_width=mouth_width,
-    )
+    return int(round(float(pt[0]))), int(round(float(pt[1])))
 
 
-def _load_assets_by_prefix(assets_dir: Path, prefix: str) -> list[Path]:
-    if not assets_dir.exists():
-        return []
-    return sorted(
-        [
-            path
-            for path in assets_dir.iterdir()
-            if path.is_file()
-            and path.suffix.lower() in _ALLOWED_EXTENSIONS
-            and path.stem.lower().startswith(prefix)
-        ]
-    )
-
-
-def _paste_scaled_overlay(
+def _paste_accessory(
     canvas: Image.Image,
     overlay: Image.Image,
-    *,
-    center_x: int,
-    center_y: int,
-    width: int,
-    angle_degrees: float = 0.0,
+    x: int,
+    y: int,
+    scale: float,
+    angle_degrees: float,
+    anchor: str = "center",
 ) -> None:
-    prepared_overlay = ImageOps.exif_transpose(overlay)
-    safe_width = max(1, width)
-    aspect_ratio = prepared_overlay.height / max(prepared_overlay.width, 1)
-    safe_height = max(1, int(round(safe_width * aspect_ratio)))
-    resized_overlay = prepared_overlay.resize((safe_width, safe_height), Image.Resampling.LANCZOS).rotate(
-        angle_degrees, resample=Image.Resampling.BICUBIC, expand=True
-    )
-    x = center_x - (resized_overlay.width // 2)
-    y = center_y - (resized_overlay.height // 2)
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    layer.paste(resized_overlay, (x, y), resized_overlay)
-    composited = Image.alpha_composite(canvas, layer)
-    canvas.paste(composited)
+    """Pastes an overlay onto the canvas rotating it around a specific anchor point."""
+    w = max(1, int(overlay.width * scale))
+    h = max(1, int(overlay.height * scale))
+    resized = overlay.resize((w, h), Image.Resampling.LANCZOS)
+
+    # PIL rotates counter-clockwise.
+    rotated = resized.rotate(angle_degrees, resample=Image.Resampling.BICUBIC, expand=True)
+
+    # Calculate offset to keep anchor steady
+    cx, cy = w / 2, h / 2
+    if anchor == "center":
+        ax, ay = cx, cy
+    elif anchor == "bottom_center":
+        ax, ay = cx, h
+    elif anchor == "left_center":
+        ax, ay = 0, cy
+    else:
+        ax, ay = cx, cy
+
+    # Rotate the anchor offset vector
+    rad = math.radians(-angle_degrees)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    vx, vy = ax - cx, ay - cy
+    rot_vx = vx * cos_a - vy * sin_a
+    rot_vy = vx * sin_a + vy * cos_a
+
+    # Calculate final paste coordinates
+    paste_x = int(x - (rotated.width / 2) - rot_vx)
+    paste_y = int(y - (rotated.height / 2) - rot_vy)
+
+    canvas.alpha_composite(rotated, (paste_x, paste_y))
+
+
+def _load_assets(assets_dir: Path, prefix: str) -> list[Path]:
+    if not assets_dir.exists():
+        return []
+    return sorted([
+        p for p in assets_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in _ALLOWED_EXTENSIONS and p.stem.lower().startswith(prefix)
+    ])
 
 
 def compose_naama_image(
@@ -442,10 +108,9 @@ def compose_naama_image(
     *,
     assets_dir: Path,
     model_name: str,
-    confidence_threshold: float = 0.15,
+    confidence_threshold: float = 0.25,
     mask_threshold: float = 0.35,
-    model_loader: Callable[[str], Any] | None = None,
-    random_seed: int | None = None,
+    **kwargs,  # Catch extra args safely
 ) -> bytes | None:
     try:
         with Image.open(BytesIO(image_bytes)) as source_image:
@@ -454,88 +119,140 @@ def compose_naama_image(
         return None
 
     image_rgb = np.asarray(source_rgba.convert("RGB"))
-    person_detection = _extract_person_detection(
-        image_rgb,
-        model_name=model_name,
-        confidence_threshold=confidence_threshold,
-        mask_threshold=mask_threshold,
-        model_loader=model_loader,
-    )
-    if person_detection is None:
-        return None
-    person_mask = person_detection.mask
-    pose_keypoints = _extract_pose_keypoints(
-        image_rgb,
-        model_name=model_name,
-        confidence_threshold=confidence_threshold,
-        model_loader=model_loader,
-    )
+    seg_model = _get_model(model_name)
+    pose_model_name = model_name.replace("-seg", "-pose") if "-seg" in model_name else model_name
+    pose_model = _get_model(pose_model_name)
 
-    background_candidates = _load_assets_by_prefix(assets_dir, "background")
-    if not background_candidates:
+    # 1. Run inference (FORCED TO CPU)
+    seg_results = seg_model.predict(source=image_rgb, task="segment", conf=confidence_threshold, device="cpu", verbose=False)
+    pose_results = pose_model.predict(source=image_rgb, task="pose", conf=confidence_threshold, device="cpu", verbose=False)
+
+    if not seg_results or seg_results[0].masks is None:
         return None
 
-    accessory_candidates: dict[str, list[Path]] = {
-        name: _load_assets_by_prefix(assets_dir, name) for name in _ACCESSORY_NAMES
-    }
-    if any(not paths for paths in accessory_candidates.values()):
+    # 2. Extract best mask (largest person)
+    masks = seg_results[0].masks.data.cpu().numpy()
+    classes = seg_results[0].boxes.cls.cpu().numpy()
+    best_mask, max_area = None, 0
+    for idx, cls in enumerate(classes):
+        if int(cls) == _PERSON_CLASS_ID:
+            area = np.sum(masks[idx] > mask_threshold)
+            if area > max_area:
+                max_area = area
+                best_mask = masks[idx] > mask_threshold
+
+    if best_mask is None:
         return None
 
-    rng = random.Random(random_seed)
-    with Image.open(rng.choice(background_candidates)) as background_image:
-        composed = background_image.convert("RGBA").resize(source_rgba.size, Image.Resampling.LANCZOS)
+    # Fix mask shape if model output differs from image
+    if best_mask.shape != (source_rgba.height, source_rgba.width):
+        best_mask = np.asarray(Image.fromarray(best_mask).resize((source_rgba.width, source_rgba.height), Image.Resampling.NEAREST))
 
-    alpha_channel = (person_mask.astype(np.uint8) * 255)
-    person_pixels = np.asarray(source_rgba, dtype=np.uint8).copy()
+    # 3. Build Person Layer
+    alpha_channel = (best_mask.astype(np.uint8) * 255)
+    person_pixels = np.asarray(source_rgba).copy()
     person_pixels[..., 3] = alpha_channel
     person_layer = Image.fromarray(person_pixels, mode="RGBA")
-    depth_width = max(1, int(round(source_rgba.width * _DEPTH_SCALE_RATIO)))
-    depth_height = max(1, int(round(source_rgba.height * _DEPTH_SCALE_RATIO)))
-    depth_x = (source_rgba.width - depth_width) // 2
-    bottom_margin = int(round(source_rgba.height * _DEPTH_BOTTOM_MARGIN_RATIO))
-    depth_y = source_rgba.height - depth_height - bottom_margin
-    depth_person = person_layer.resize((depth_width, depth_height), Image.Resampling.LANCZOS)
-    depth_layer = Image.new("RGBA", source_rgba.size, (0, 0, 0, 0))
-    depth_layer.paste(depth_person, (depth_x, depth_y), depth_person)
-    composed = Image.alpha_composite(composed, depth_layer)
 
-    person_height = person_detection.height
-    anchors = _build_naama_anchors(person_mask, person_detection, pose_keypoints)
-    scaled_person_height = max(1, int(round(person_height * _DEPTH_SCALE_RATIO)))
-    scaled_top_head = (
-        int(round(anchors.top_head[0] * _DEPTH_SCALE_RATIO)) + depth_x,
-        int(round(anchors.top_head[1] * _DEPTH_SCALE_RATIO)) + depth_y,
-    )
-    scaled_mouth = (
-        int(round(anchors.mouth[0] * _DEPTH_SCALE_RATIO)) + depth_x,
-        int(round(anchors.mouth[1] * _DEPTH_SCALE_RATIO)) + depth_y,
-    )
+    # 4. Create Composition Canvas
+    backgrounds = _load_assets(assets_dir, "background")
+    if not backgrounds:
+        return None
 
-    with Image.open(rng.choice(accessory_candidates["hat"])) as hat_image:
-        _paste_scaled_overlay(
-            composed,
-            hat_image.convert("RGBA"),
-            center_x=scaled_top_head[0],
-            center_y=scaled_top_head[1] - max(1, int(round(anchors.head_width * _DEPTH_SCALE_RATIO * 0.45))),
-            width=max(1, int(round(anchors.head_width * _DEPTH_SCALE_RATIO * 1.35))),
-            angle_degrees=anchors.head_angle_degrees * _HAT_ROTATION_SCALE,
-        )
-    with Image.open(rng.choice(accessory_candidates["cigar"])) as cigar_image:
-        _paste_scaled_overlay(
-            composed,
-            cigar_image.convert("RGBA"),
-            center_x=scaled_mouth[0] + int(round(anchors.mouth_width * _DEPTH_SCALE_RATIO * 0.65)),
-            center_y=scaled_mouth[1] + int(scaled_person_height * 0.02),
-            width=max(1, int(round(anchors.mouth_width * _DEPTH_SCALE_RATIO * 1.45))),
-            angle_degrees=anchors.head_angle_degrees * _CIGAR_ROTATION_SCALE,
-        )
-    with Image.open(rng.choice(accessory_candidates["sun"])) as sun_image:
-        _paste_scaled_overlay(
-            composed,
-            sun_image.convert("RGBA"),
-            center_x=source_rgba.width - int(source_rgba.width * 0.14),
-            center_y=int(source_rgba.height * 0.14),
-            width=max(1, int(source_rgba.width * 0.22)),
-        )
+    rng = random.Random()
+    with Image.open(rng.choice(backgrounds)) as bg_image:
+        composed = bg_image.convert("RGBA").resize(source_rgba.size, Image.Resampling.LANCZOS)
+
+    # 5. Apply Depth Scale & Paste Person
+    depth_w = int(source_rgba.width * _DEPTH_SCALE_RATIO)
+    depth_h = int(source_rgba.height * _DEPTH_SCALE_RATIO)
+    depth_x = (source_rgba.width - depth_w) // 2
+    depth_y = source_rgba.height - depth_h - int(source_rgba.height * _DEPTH_BOTTOM_MARGIN_RATIO)
+
+    person_scaled = person_layer.resize((depth_w, depth_h), Image.Resampling.LANCZOS)
+    composed.alpha_composite(person_scaled, (depth_x, depth_y))
+
+    # 6. Extract and Scale Keypoints
+    kpts = pose_results[0].keypoints.data.cpu().numpy() if pose_results and pose_results[0].keypoints is not None else None
+
+    def get_scaled_kpt(idx):
+        pt = _get_keypoint(kpts, idx)
+        if pt is None: return None
+        return (int(pt[0] * _DEPTH_SCALE_RATIO + depth_x), int(pt[1] * _DEPTH_SCALE_RATIO + depth_y))
+
+    nose = get_scaled_kpt(0)
+    l_eye = get_scaled_kpt(1) # Person's left eye (right side of image)
+    r_eye = get_scaled_kpt(2) # Person's right eye (left side of image)
+
+    # 7. Math for Anchors
+    pil_angle = 0.0
+    eye_dist = depth_w * 0.15 # Fallback
+
+    if l_eye and r_eye:
+        dx = l_eye[0] - r_eye[0]
+        dy = l_eye[1] - r_eye[1]
+
+        head_angle = math.degrees(math.atan2(dy, dx))
+        pil_angle = -head_angle
+        eye_dist = math.hypot(dx, dy)
+        eye_center = ((l_eye[0] + r_eye[0]) / 2, (l_eye[1] + r_eye[1]) / 2)
+    else:
+        eye_center = (depth_x + depth_w / 2, depth_y + depth_h * 0.2)
+
+    # Calculate Top of Head & Mouth based on facial vectors
+    if nose and l_eye and r_eye:
+        nx = nose[0] - eye_center[0]
+        ny = nose[1] - eye_center[1]
+        # Pulled the mouth slightly closer to the nose (0.75 instead of 0.9) for better baseline accuracy
+        mouth = (nose[0] + nx * 0.75, nose[1] + ny * 0.75)
+        top_head = (eye_center[0] - nx * 1.8, eye_center[1] - ny * 1.8)
+    else:
+        mouth = (depth_x + depth_w / 2, depth_y + depth_h * 0.35)
+        top_head = (depth_x + depth_w / 2, depth_y + depth_h * 0.1)
+
+    # 8. Add Accessories
+    hats = _load_assets(assets_dir, "hat")
+    cigars = _load_assets(assets_dir, "cigar")
+    suns = _load_assets(assets_dir, "sun")
+
+    if hats:
+        with Image.open(rng.choice(hats)).convert("RGBA") as hat_img:
+            hat_scale = (eye_dist * 3.2) / hat_img.width
+            _paste_accessory(
+                composed, hat_img,
+                x=top_head[0], y=top_head[1],
+                scale=hat_scale, angle_degrees=pil_angle, anchor="bottom_center"
+            )
+
+    if cigars:
+        with Image.open(rng.choice(cigars)).convert("RGBA") as cigar_img:
+            cigar_scale = (eye_dist * 2.5) / cigar_img.width
+            cigar_angle = pil_angle - 15
+
+            # Shift the cigar inward along the angle of the head so it overlaps the face
+            # This visually "embeds" it in the lips
+            rad = math.radians(-pil_angle)
+            overlap_shift = eye_dist * 0.35
+            embedded_mouth_x = mouth[0] - (math.cos(rad) * overlap_shift)
+            embedded_mouth_y = mouth[1] - (math.sin(rad) * overlap_shift)
+
+            _paste_accessory(
+                composed, cigar_img,
+                x=embedded_mouth_x, y=embedded_mouth_y,
+                scale=cigar_scale, angle_degrees=cigar_angle, anchor="left_center"
+            )
+
+    if suns:
+        with Image.open(rng.choice(suns)).convert("RGBA") as sun_img:
+            sun_target_w = int(source_rgba.width * 0.25)
+            sun_scale = sun_target_w / sun_img.width
+            margin = int(source_rgba.width * 0.05)
+            sun_x = source_rgba.width - (sun_target_w // 2) - margin
+            sun_y = (int(sun_img.height * sun_scale) // 2) + margin
+            _paste_accessory(
+                composed, sun_img,
+                x=sun_x, y=sun_y,
+                scale=sun_scale, angle_degrees=0, anchor="center"
+            )
 
     return _encode_png(composed.convert("RGB"))
