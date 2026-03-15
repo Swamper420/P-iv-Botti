@@ -27,6 +27,10 @@ has been active. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and
 The bot supports `mumble` / `!mumble` for local Mumble server status checks on all server channels.
 Set `MUMBLE_HOST`, `MUMBLE_PORT`, `MUMBLE_USERNAME`, and `MUMBLE_PASSWORD` in `.env`.
 
+The bot supports `!naama` on a photo caption or as a reply to a photo. It segments the person from the
+source image, applies a random `background*` image, and overlays random `hat*`, `suit*`, `gloves*`,
+`cigar*`, and `sun*` PNG/JPG assets from `storage/naama/`.
+
 ## Setup
 
 1. Create and activate a virtual environment.
