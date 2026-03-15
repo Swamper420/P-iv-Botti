@@ -66,6 +66,7 @@ def _build_handler(
             )
             return
 
+        # Simplified function call matching the new logic
         processed = await asyncio.to_thread(
             compose_naama_image,
             photo_bytes,
