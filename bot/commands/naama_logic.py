@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
@@ -10,12 +11,42 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from bot.commands.deepfry_logic import _get_model
-
 LOGGER = logging.getLogger(__name__)
 _PERSON_CLASS_ID = 0
 _ACCESSORY_NAMES = ("hat", "suit", "gloves", "cigar", "sun")
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_MODEL_CACHE: dict[str, Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+_MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _default_model_loader(model_name: str) -> Any:
+    from ultralytics import YOLO
+
+    return YOLO(model_name)
+
+
+def _get_model(model_name: str, model_loader: Callable[[str], Any] | None) -> Any:
+    if model_loader is not None:
+        return model_loader(model_name)
+
+    with _MODEL_CACHE_LOCK:
+        cached = _MODEL_CACHE.get(model_name)
+        if cached is not None:
+            return cached
+        load_lock = _MODEL_LOAD_LOCKS.setdefault(model_name, threading.Lock())
+
+    with load_lock:
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(model_name)
+            if cached is not None:
+                return cached
+
+        model = _default_model_loader(model_name)
+
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE[model_name] = model
+            return model
 
 
 def _encode_png(image: Image.Image) -> bytes:
@@ -71,7 +102,7 @@ def _extract_person_mask(
         LOGGER.exception("Naama image segmentation failed")
         return None
 
-    if not results:
+    if not isinstance(results, (list, tuple)) or len(results) == 0:
         return None
 
     first_result = results[0]
