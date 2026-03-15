@@ -53,7 +53,12 @@ class _DummyApplicationNoJobQueue:
 
 
 class MumbleCommandTests(unittest.TestCase):
-    def _config(self, *, monitor_interval_seconds: int = 10) -> BotConfig:
+    def _config(
+        self,
+        *,
+        monitor_interval_seconds: int = 10,
+        startup_delay_seconds: int = 0,
+    ) -> BotConfig:
         return BotConfig(
             telegram_bot_token="token",
             storage_dir=Path("."),
@@ -80,6 +85,7 @@ class MumbleCommandTests(unittest.TestCase):
             mumble_connect_timeout_seconds=10,
             mumble_status_wait_seconds=1,
             mumble_monitor_interval_seconds=monitor_interval_seconds,
+            mumble_startup_delay_seconds=startup_delay_seconds,
         )
 
     def test_register_adds_mumble_handler_and_monitor_job(self) -> None:
@@ -169,7 +175,10 @@ class MumbleFallbackMonitorAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_background_monitor_uses_fallback_loop_without_job_queue(self) -> None:
         app = _DummyApplicationNoJobQueue()
-        config = MumbleCommandTests()._config(monitor_interval_seconds=60)
+        config = MumbleCommandTests()._config(
+            monitor_interval_seconds=60,
+            startup_delay_seconds=0,
+        )
 
         with patch(
             "bot.commands.mumble._refresh_monitored_snapshot",
@@ -182,12 +191,22 @@ class MumbleFallbackMonitorAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_background_monitor_skips_fallback_when_job_queue_exists(self) -> None:
         app = _DummyApplication()
-        config = MumbleCommandTests()._config(monitor_interval_seconds=60)
+        config = MumbleCommandTests()._config(
+            monitor_interval_seconds=60,
+            startup_delay_seconds=0,
+        )
 
-        with patch("bot.commands.mumble.asyncio.create_task") as create_task_mock:
+        with (
+            patch("bot.commands.mumble.asyncio.create_task") as create_task_mock,
+            patch(
+                "bot.commands.mumble._refresh_monitored_snapshot",
+                new=AsyncMock(),
+            ) as refresh_mock,
+        ):
             await mumble.start_background_monitor(app, config)
 
         create_task_mock.assert_not_called()
+        refresh_mock.assert_awaited_once_with(app, config)
 
 
 class MumbleConnectionStateLoggingTests(unittest.TestCase):
