@@ -3,6 +3,7 @@ from __future__ import annotations
 import colorsys
 import logging
 import random
+import threading
 from collections.abc import Callable, Sequence
 from io import BytesIO
 from typing import Any
@@ -12,6 +13,8 @@ from PIL import Image
 
 LOGGER = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+_MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _default_model_loader(model_name: str) -> Any:
@@ -24,13 +27,23 @@ def _get_model(model_name: str, model_loader: Callable[[str], Any] | None) -> An
     if model_loader is not None:
         return model_loader(model_name)
 
-    cached = _MODEL_CACHE.get(model_name)
-    if cached is not None:
-        return cached
+    with _MODEL_CACHE_LOCK:
+        cached = _MODEL_CACHE.get(model_name)
+        if cached is not None:
+            return cached
+        load_lock = _MODEL_LOAD_LOCKS.setdefault(model_name, threading.Lock())
 
-    model = _default_model_loader(model_name)
-    _MODEL_CACHE[model_name] = model
-    return model
+    with load_lock:
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(model_name)
+            if cached is not None:
+                return cached
+
+        model = _default_model_loader(model_name)
+
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE[model_name] = model
+            return model
 
 
 def _encode_png(image_rgb: np.ndarray) -> bytes:
