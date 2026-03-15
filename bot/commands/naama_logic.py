@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 LOGGER = logging.getLogger(__name__)
 _PERSON_CLASS_ID = 0
@@ -340,10 +340,11 @@ def _paste_scaled_overlay(
     width: int,
     angle_degrees: float = 0.0,
 ) -> None:
+    prepared_overlay = ImageOps.exif_transpose(overlay)
     safe_width = max(1, width)
-    aspect_ratio = overlay.height / max(overlay.width, 1)
+    aspect_ratio = prepared_overlay.height / max(prepared_overlay.width, 1)
     safe_height = max(1, int(round(safe_width * aspect_ratio)))
-    resized_overlay = overlay.resize((safe_width, safe_height), Image.Resampling.LANCZOS).rotate(
+    resized_overlay = prepared_overlay.resize((safe_width, safe_height), Image.Resampling.LANCZOS).rotate(
         angle_degrees, resample=Image.Resampling.BICUBIC, expand=True
     )
     x = center_x - (resized_overlay.width // 2)
@@ -366,7 +367,7 @@ def compose_naama_image(
 ) -> bytes | None:
     try:
         with Image.open(BytesIO(image_bytes)) as source_image:
-            source_rgba = source_image.convert("RGBA")
+            source_rgba = ImageOps.exif_transpose(source_image).convert("RGBA")
     except OSError:
         return None
 
