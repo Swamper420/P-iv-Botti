@@ -18,6 +18,15 @@ def _png_bytes_from_rgb(array: np.ndarray) -> bytes:
     return output.getvalue()
 
 
+def _jpeg_bytes_from_rgb_with_orientation(array: np.ndarray, orientation: int) -> bytes:
+    output = BytesIO()
+    image = Image.fromarray(array.astype(np.uint8), mode="RGB")
+    exif = Image.Exif()
+    exif[274] = orientation
+    image.save(output, format="JPEG", exif=exif)
+    return output.getvalue()
+
+
 def _create_asset(path: Path, color: tuple[int, int, int, int], size: tuple[int, int] = (60, 60)) -> None:
     image = Image.new("RGBA", size, color)
     image.save(path, format="PNG")
@@ -71,6 +80,40 @@ class _DummyModel:
 
 
 class NaamaLogicTests(unittest.TestCase):
+    def test_compose_naama_image_applies_source_exif_orientation_before_detection(self) -> None:
+        source = np.full((30, 50, 3), 45, dtype=np.uint8)
+        source_bytes = _jpeg_bytes_from_rgb_with_orientation(source, orientation=6)
+        mask = np.ones((50, 30), dtype=np.float32)
+        segment_model = _DummyModel([mask], [0.0])
+        pose_model = _DummyModel(keypoints=None)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            if model_name.endswith("-pose.pt"):
+                return pose_model
+            return segment_model
+
+        with TemporaryDirectory() as tmp_dir:
+            assets_dir = Path(tmp_dir)
+            _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(30, 50))
+            _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(20, 10))
+            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(24, 18))
+            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(22, 12))
+            _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(10, 4))
+            _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(12, 12))
+
+            output = compose_naama_image(
+                source_bytes,
+                assets_dir=assets_dir,
+                model_name="yolo26n-seg.pt",
+                model_loader=model_loader,
+                random_seed=5,
+            )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(segment_model.predict_calls[0]["source"].shape, (50, 30, 3))
+        with Image.open(BytesIO(output or b"")) as image:
+            self.assertEqual(image.size, (30, 50))
+
     def test_compose_naama_image_builds_profile_picture(self) -> None:
         source = np.full((80, 80, 3), 30, dtype=np.uint8)
         source_bytes = _png_bytes_from_rgb(source)
