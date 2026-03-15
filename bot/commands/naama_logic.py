@@ -261,7 +261,7 @@ def _extract_pose_keypoints(
 
     if keypoints_array.ndim == 2:
         keypoints_array = keypoints_array[np.newaxis, ...]
-    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_SHOULDER_INDEX:
+    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_EYE_INDEX:
         return None
     if keypoints_array.shape[2] < 2:
         return None
@@ -492,7 +492,8 @@ def compose_naama_image(
     depth_width = max(1, int(round(source_rgba.width * _DEPTH_SCALE_RATIO)))
     depth_height = max(1, int(round(source_rgba.height * _DEPTH_SCALE_RATIO)))
     depth_x = (source_rgba.width - depth_width) // 2
-    depth_y = source_rgba.height - depth_height - int(round(source_rgba.height * _DEPTH_BOTTOM_MARGIN_RATIO))
+    bottom_margin = int(round(source_rgba.height * _DEPTH_BOTTOM_MARGIN_RATIO))
+    depth_y = source_rgba.height - depth_height - bottom_margin
     depth_person = person_layer.resize((depth_width, depth_height), Image.Resampling.LANCZOS)
     depth_layer = Image.new("RGBA", source_rgba.size, (0, 0, 0, 0))
     depth_layer.paste(depth_person, (depth_x, depth_y), depth_person)

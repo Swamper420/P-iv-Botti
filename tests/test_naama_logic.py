@@ -256,7 +256,11 @@ class NaamaLogicTests(unittest.TestCase):
         self.assertEqual(overlay_calls[0]["width"], 16.0)  # hat width from head box + depth scale
         self.assertAlmostEqual(overlay_calls[0]["angle"], 5.64, places=1)  # hat uses eye rotation
         self.assertEqual(overlay_calls[1]["width"], 7.0)  # cigar width from mouth box + depth scale
-        self.assertAlmostEqual(overlay_calls[1]["angle"], 9.4, places=1)  # cigar uses eye rotation
+        self.assertAlmostEqual(
+            overlay_calls[1]["angle"],
+            overlay_calls[0]["angle"] * (naama_logic._CIGAR_ROTATION_SCALE / naama_logic._HAT_ROTATION_SCALE),
+            places=1,
+        )
         self.assertEqual(overlay_calls[2]["width"], 22.0)  # sun width based on output width
 
     def test_compose_naama_image_uses_shoulder_orientation_when_eyes_missing(self) -> None:
@@ -266,6 +270,8 @@ class NaamaLogicTests(unittest.TestCase):
         mask[10:70, 20:60] = 1.0
         segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 70.0]])
         keypoints = np.zeros((1, 17, 3), dtype=np.float32)
+        keypoints[0, 1] = [30.0, 20.0, 0.0]  # left eye below confidence threshold
+        keypoints[0, 2] = [50.0, 20.0, 0.0]  # right eye below confidence threshold
         keypoints[0, 5] = [25.0, 55.0, 0.9]  # left shoulder
         keypoints[0, 6] = [65.0, 40.0, 0.9]  # right shoulder
         pose_model = _DummyModel(keypoints=keypoints)
@@ -301,6 +307,53 @@ class NaamaLogicTests(unittest.TestCase):
         self.assertAlmostEqual(overlay_calls[0]["angle"], -9.25, places=1)  # hat uses shoulder fallback
         self.assertAlmostEqual(overlay_calls[1]["angle"], -15.42, places=1)  # cigar uses shoulder fallback
         self.assertEqual(overlay_calls[2]["angle"], 0.0)  # sun has no rotation
+
+    def test_compose_naama_image_prioritizes_eye_rotation_over_shoulders(self) -> None:
+        source = np.full((80, 80, 3), 30, dtype=np.uint8)
+        source_bytes = _png_bytes_from_rgb(source)
+        mask = np.zeros((80, 80), dtype=np.float32)
+        mask[10:70, 20:60] = 1.0
+        segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 70.0]])
+        keypoints = np.zeros((1, 17, 3), dtype=np.float32)
+        keypoints[0, 0] = [40.0, 28.0, 0.9]  # nose
+        keypoints[0, 1] = [30.0, 22.0, 0.9]  # left eye (flat eye line)
+        keypoints[0, 2] = [50.0, 22.0, 0.9]  # right eye
+        keypoints[0, 5] = [25.0, 60.0, 0.9]  # left shoulder (tilted shoulder line)
+        keypoints[0, 6] = [65.0, 42.0, 0.9]  # right shoulder
+        pose_model = _DummyModel(keypoints=keypoints)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            if model_name.endswith("-pose.pt"):
+                return pose_model
+            return segment_model
+
+        overlay_calls: list[dict[str, float]] = []
+
+        def capture_overlay(*args: object, **kwargs: object) -> None:
+            overlay_calls.append({"angle": float(kwargs.get("angle_degrees", 0.0))})
+
+        with TemporaryDirectory() as tmp_dir:
+            assets_dir = Path(tmp_dir)
+            _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(80, 80))
+            _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
+            _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
+            _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
+
+            with patch.object(naama_logic, "_paste_scaled_overlay", side_effect=capture_overlay):
+                output = compose_naama_image(
+                    source_bytes,
+                    assets_dir=assets_dir,
+                    model_name="yolo26n-seg.pt",
+                    model_loader=model_loader,
+                    random_seed=5,
+                )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(len(overlay_calls), 3)
+        shoulder_angle = np.degrees(np.arctan2(42.0 - 60.0, 65.0 - 25.0))
+        self.assertLess(shoulder_angle, -20.0)  # shoulder fallback path would be clearly non-zero
+        self.assertAlmostEqual(overlay_calls[0]["angle"], 0.0, places=1)
+        self.assertAlmostEqual(overlay_calls[1]["angle"], 0.0, places=1)
 
     def test_compose_naama_image_returns_none_without_required_assets(self) -> None:
         source = np.full((60, 60, 3), 50, dtype=np.uint8)
