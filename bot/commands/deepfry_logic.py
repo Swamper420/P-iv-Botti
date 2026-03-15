@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 LOGGER = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Any] = {}
@@ -52,7 +52,9 @@ def _encode_png(image_rgb: np.ndarray) -> bytes:
     return output_buffer.getvalue()
 
 
-def _mask_to_bool(mask: object, *, height: int, width: int) -> np.ndarray | None:
+def _mask_to_bool(
+    mask: object, *, height: int, width: int, threshold: float
+) -> np.ndarray | None:
     value: Any = mask
     cpu_fn = getattr(value, "cpu", None)
     if callable(cpu_fn):
@@ -75,7 +77,7 @@ def _mask_to_bool(mask: object, *, height: int, width: int) -> np.ndarray | None
         )
         mask_array = np.asarray(resized, dtype=np.float32) / 255.0
 
-    return mask_array > 0.5
+    return mask_array > threshold
 
 
 def apply_segment_hue_overlay(
@@ -105,11 +107,30 @@ def apply_segment_hue_overlay(
     return np.clip(output, 0, 255).astype(np.uint8)
 
 
+def apply_deepfry_layers(image_rgb: np.ndarray) -> np.ndarray:
+    base_image = Image.fromarray(image_rgb.astype(np.uint8), mode="RGB")
+    base_image = ImageEnhance.Color(base_image).enhance(2.1)
+    base_image = ImageEnhance.Contrast(base_image).enhance(1.45)
+    base_image = ImageEnhance.Sharpness(base_image).enhance(2.2)
+    unsharp_filter_threshold = 2
+    base_image = base_image.filter(
+        ImageFilter.UnsharpMask(radius=2, percent=210, threshold=unsharp_filter_threshold)
+    )
+    fried = np.asarray(base_image.convert("RGB"), dtype=np.float32)
+    fried[..., 0] *= 1.22
+    fried[..., 1] *= 1.05
+    fried[..., 2] *= 0.84
+    fried = (fried - 128.0) * 1.15 + 128.0
+    return np.clip(fried, 0, 255).astype(np.uint8)
+
+
 def segment_and_recolor_image(
     image_bytes: bytes,
     *,
     model_name: str,
     alpha: float,
+    confidence_threshold: float = 0.15,
+    mask_threshold: float = 0.35,
     model_loader: Callable[[str], Any] | None = None,
     random_seed: int | None = None,
 ) -> bytes | None:
@@ -125,27 +146,27 @@ def segment_and_recolor_image(
             source=image_rgb,
             task="segment",
             device="cpu",
+            conf=max(0.0, min(confidence_threshold, 1.0)),
             verbose=False,
         )
     except Exception:
         LOGGER.exception("Image segmentation failed")
         return None
 
-    if not results:
-        return _encode_png(image_rgb)
-
-    masks_data = getattr(getattr(results[0], "masks", None), "data", None)
-    if masks_data is None:
-        return _encode_png(image_rgb)
-
+    masks_data = getattr(getattr(results[0], "masks", None), "data", None) if results else None
     image_height, image_width = image_rgb.shape[:2]
     masks: list[np.ndarray] = []
-    for raw_mask in masks_data:
-        mask = _mask_to_bool(raw_mask, height=image_height, width=image_width)
-        if mask is not None:
-            masks.append(mask)
+    if masks_data is not None:
+        safe_threshold = max(0.0, min(mask_threshold, 1.0))
+        for raw_mask in masks_data:
+            mask = _mask_to_bool(
+                raw_mask, height=image_height, width=image_width, threshold=safe_threshold
+            )
+            if mask is not None:
+                masks.append(mask)
 
     recolored = apply_segment_hue_overlay(
         image_rgb, masks, alpha=alpha, random_seed=random_seed
     )
-    return _encode_png(recolored)
+    deepfried = apply_deepfry_layers(recolored)
+    return _encode_png(deepfried)

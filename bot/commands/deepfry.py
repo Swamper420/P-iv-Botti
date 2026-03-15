@@ -75,6 +75,8 @@ def _build_handler(
             photo_bytes,
             model_name=config.deepfry_model_name,
             alpha=config.deepfry_overlay_alpha,
+            confidence_threshold=config.deepfry_confidence_threshold,
+            mask_threshold=config.deepfry_mask_threshold,
         )
 
         if not processed:
