@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import math
 import random
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -15,9 +17,25 @@ LOGGER = logging.getLogger(__name__)
 _PERSON_CLASS_ID = 0
 _ACCESSORY_NAMES = ("hat", "suit", "gloves", "cigar", "sun")
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_COCO_NOSE_INDEX = 0
+_COCO_LEFT_SHOULDER_INDEX = 5
+_COCO_RIGHT_SHOULDER_INDEX = 6
+_COCO_LEFT_WRIST_INDEX = 9
+_COCO_RIGHT_WRIST_INDEX = 10
+_KEYPOINT_MIN_CONFIDENCE = 0.2
 _MODEL_CACHE: dict[str, Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 _MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
+
+
+@dataclass(frozen=True)
+class _NaamaAnchors:
+    top_head: tuple[int, int]
+    mouth: tuple[int, int]
+    left_hand: tuple[int, int]
+    right_hand: tuple[int, int]
+    body_center: tuple[int, int]
+    shoulder_angle_degrees: float
 
 
 def _default_model_loader(model_name: str) -> Any:
@@ -131,6 +149,149 @@ def _extract_person_mask(
     return person_mask if person_mask.any() else None
 
 
+def _derive_pose_model_name(segmentation_model_name: str) -> str:
+    lower_name = segmentation_model_name.lower()
+    if "-seg" in lower_name:
+        start_index = lower_name.index("-seg")
+        return segmentation_model_name[:start_index] + "-pose" + segmentation_model_name[start_index + 4 :]
+    return segmentation_model_name
+
+
+def _extract_pose_keypoints(
+    image_rgb: np.ndarray,
+    *,
+    model_name: str,
+    confidence_threshold: float,
+    model_loader: Callable[[str], Any] | None,
+) -> np.ndarray | None:
+    pose_model_name = _derive_pose_model_name(model_name)
+    try:
+        model = _get_model(pose_model_name, model_loader)
+        results = model.predict(
+            source=image_rgb,
+            task="pose",
+            device="cpu",
+            conf=max(0.0, min(confidence_threshold, 1.0)),
+            verbose=False,
+        )
+    except Exception:
+        LOGGER.debug("Naama pose detection failed", exc_info=True)
+        return None
+
+    if not isinstance(results, (list, tuple)) or len(results) == 0:
+        return None
+
+    keypoints_data = getattr(getattr(results[0], "keypoints", None), "data", None)
+    if keypoints_data is None:
+        return None
+
+    value: Any = keypoints_data
+    cpu_fn = getattr(value, "cpu", None)
+    if callable(cpu_fn):
+        value = cpu_fn()
+    numpy_fn = getattr(value, "numpy", None)
+    if callable(numpy_fn):
+        value = numpy_fn()
+
+    try:
+        keypoints_array = np.asarray(value, dtype=np.float32)
+    except (TypeError, ValueError):
+        return None
+
+    if keypoints_array.ndim == 2:
+        keypoints_array = keypoints_array[np.newaxis, ...]
+    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_WRIST_INDEX:
+        return None
+    if keypoints_array.shape[2] < 2:
+        return None
+
+    return keypoints_array
+
+
+def _mask_point(mask: np.ndarray, x_ratio: float, y_ratio: float) -> tuple[int, int]:
+    y_coords, x_coords = np.where(mask)
+    left, right = int(x_coords.min()), int(x_coords.max())
+    top, bottom = int(y_coords.min()), int(y_coords.max())
+    width = max(1, right - left + 1)
+    height = max(1, bottom - top + 1)
+    point_x = left + int(round(width * x_ratio))
+    point_y = top + int(round(height * y_ratio))
+    return point_x, point_y
+
+
+def _extract_anchor_from_keypoints(
+    keypoints: np.ndarray | None, keypoint_index: int
+) -> tuple[int, int] | None:
+    if keypoints is None or keypoints.shape[0] == 0:
+        return None
+
+    person_points = keypoints[0]
+    if person_points.shape[0] <= keypoint_index:
+        return None
+
+    point = person_points[keypoint_index]
+    confidence = float(point[2]) if point.shape[0] > 2 else 1.0
+    if confidence < _KEYPOINT_MIN_CONFIDENCE:
+        return None
+
+    return int(round(float(point[0]))), int(round(float(point[1])))
+
+
+def _build_naama_anchors(person_mask: np.ndarray, pose_keypoints: np.ndarray | None) -> _NaamaAnchors:
+    y_coords, x_coords = np.where(person_mask)
+    left, right = int(x_coords.min()), int(x_coords.max())
+    top, bottom = int(y_coords.min()), int(y_coords.max())
+    person_width = max(1, right - left + 1)
+    person_height = max(1, bottom - top + 1)
+    center_x = left + (person_width // 2)
+    center_y = top + (person_height // 2)
+
+    top_band = y_coords <= (top + max(1, int(person_height * 0.08)))
+    top_x_values = x_coords[top_band] if np.any(top_band) else x_coords
+    top_head_x = int(np.median(top_x_values))
+    top_head = (top_head_x, top)
+
+    nose = _extract_anchor_from_keypoints(pose_keypoints, _COCO_NOSE_INDEX)
+    left_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_SHOULDER_INDEX)
+    right_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_SHOULDER_INDEX)
+    left_wrist = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_WRIST_INDEX)
+    right_wrist = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_WRIST_INDEX)
+
+    default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=0.42)
+    mouth = (
+        nose[0],
+        int(round(nose[1] + person_height * 0.08)),
+    ) if nose is not None else default_mouth
+    left_hand = left_wrist if left_wrist is not None else _mask_point(person_mask, x_ratio=0.12, y_ratio=0.63)
+    right_hand = (
+        right_wrist if right_wrist is not None else _mask_point(person_mask, x_ratio=0.88, y_ratio=0.63)
+    )
+
+    if left_shoulder is not None and right_shoulder is not None:
+        shoulder_angle = math.degrees(
+            math.atan2(
+                float(right_shoulder[1] - left_shoulder[1]),
+                float(right_shoulder[0] - left_shoulder[0]),
+            )
+        )
+        body_center = (
+            int(round((left_shoulder[0] + right_shoulder[0]) / 2.0)),
+            int(round((left_shoulder[1] + right_shoulder[1]) / 2.0 + person_height * 0.33)),
+        )
+    else:
+        shoulder_angle = 0.0
+        body_center = (center_x, center_y + int(round(person_height * 0.16)))
+
+    return _NaamaAnchors(
+        top_head=top_head,
+        mouth=mouth,
+        left_hand=left_hand,
+        right_hand=right_hand,
+        body_center=body_center,
+        shoulder_angle_degrees=shoulder_angle,
+    )
+
+
 def _load_assets_by_prefix(assets_dir: Path, prefix: str) -> list[Path]:
     if not assets_dir.exists():
         return []
@@ -146,15 +307,24 @@ def _load_assets_by_prefix(assets_dir: Path, prefix: str) -> list[Path]:
 
 
 def _paste_scaled_overlay(
-    canvas: Image.Image, overlay: Image.Image, *, center_x: int, top_y: int, width: int
+    canvas: Image.Image,
+    overlay: Image.Image,
+    *,
+    center_x: int,
+    center_y: int,
+    width: int,
+    angle_degrees: float = 0.0,
 ) -> None:
     safe_width = max(1, width)
     aspect_ratio = overlay.height / max(overlay.width, 1)
     safe_height = max(1, int(round(safe_width * aspect_ratio)))
-    resized_overlay = overlay.resize((safe_width, safe_height), Image.Resampling.LANCZOS)
-    x = center_x - (safe_width // 2)
+    resized_overlay = overlay.resize((safe_width, safe_height), Image.Resampling.LANCZOS).rotate(
+        angle_degrees, resample=Image.Resampling.BICUBIC, expand=True
+    )
+    x = center_x - (resized_overlay.width // 2)
+    y = center_y - (resized_overlay.height // 2)
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    layer.paste(resized_overlay, (x, top_y), resized_overlay)
+    layer.paste(resized_overlay, (x, y), resized_overlay)
     composited = Image.alpha_composite(canvas, layer)
     canvas.paste(composited)
 
@@ -185,6 +355,12 @@ def compose_naama_image(
     )
     if person_mask is None:
         return None
+    pose_keypoints = _extract_pose_keypoints(
+        image_rgb,
+        model_name=model_name,
+        confidence_threshold=confidence_threshold,
+        model_loader=model_loader,
+    )
 
     background_candidates = _load_assets_by_prefix(assets_dir, "background")
     if not background_candidates:
@@ -211,46 +387,51 @@ def compose_naama_image(
     top, bottom = int(y_coords.min()), int(y_coords.max())
     person_width = max(1, right - left + 1)
     person_height = max(1, bottom - top + 1)
-    center_x = left + (person_width // 2)
+    anchors = _build_naama_anchors(person_mask, pose_keypoints)
+    hand_span = max(1, abs(anchors.right_hand[0] - anchors.left_hand[0]))
 
     with Image.open(rng.choice(accessory_candidates["hat"])) as hat_image:
         _paste_scaled_overlay(
             composed,
             hat_image.convert("RGBA"),
-            center_x=center_x,
-            top_y=top - int(person_height * 0.35),
+            center_x=anchors.top_head[0],
+            center_y=anchors.top_head[1] - int(person_height * 0.16),
             width=int(person_width * 0.95),
+            angle_degrees=anchors.shoulder_angle_degrees * 0.45,
         )
     with Image.open(rng.choice(accessory_candidates["suit"])) as suit_image:
         _paste_scaled_overlay(
             composed,
             suit_image.convert("RGBA"),
-            center_x=center_x,
-            top_y=bottom - int(person_height * 0.2),
+            center_x=anchors.body_center[0],
+            center_y=anchors.body_center[1] + int(person_height * 0.2),
             width=int(person_width * 1.15),
+            angle_degrees=anchors.shoulder_angle_degrees * 0.25,
         )
     with Image.open(rng.choice(accessory_candidates["gloves"])) as gloves_image:
         _paste_scaled_overlay(
             composed,
             gloves_image.convert("RGBA"),
-            center_x=center_x,
-            top_y=bottom - int(person_height * 0.45),
-            width=int(person_width * 1.1),
+            center_x=int(round((anchors.left_hand[0] + anchors.right_hand[0]) / 2.0)),
+            center_y=int(round((anchors.left_hand[1] + anchors.right_hand[1]) / 2.0)),
+            width=max(int(person_width * 0.9), int(hand_span * 1.25)),
+            angle_degrees=anchors.shoulder_angle_degrees * 0.8,
         )
     with Image.open(rng.choice(accessory_candidates["cigar"])) as cigar_image:
         _paste_scaled_overlay(
             composed,
             cigar_image.convert("RGBA"),
-            center_x=right - int(person_width * 0.08),
-            top_y=top + int(person_height * 0.58),
+            center_x=anchors.mouth[0] + int(person_width * 0.08),
+            center_y=anchors.mouth[1] + int(person_height * 0.02),
             width=max(1, int(person_width * 0.28)),
+            angle_degrees=anchors.shoulder_angle_degrees * 0.75,
         )
     with Image.open(rng.choice(accessory_candidates["sun"])) as sun_image:
         _paste_scaled_overlay(
             composed,
             sun_image.convert("RGBA"),
             center_x=source_rgba.width - int(source_rgba.width * 0.14),
-            top_y=int(source_rgba.height * 0.03),
+            center_y=int(source_rgba.height * 0.14),
             width=max(1, int(source_rgba.width * 0.22)),
         )
 
