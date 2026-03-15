@@ -32,6 +32,10 @@ class ConfigTests(unittest.TestCase):
                 "MUMBLE_STATUS_WAIT_SECONDS": "2",
                 "MUMBLE_MONITOR_INTERVAL_SECONDS": "10",
                 "MUMBLE_TELE_CHAT_ID": "-100123456789",
+                "NAAMA_MODEL_NAME": "custom-naama-seg.pt",
+                "NAAMA_CONFIDENCE_THRESHOLD": "0.25",
+                "NAAMA_MASK_THRESHOLD": "0.45",
+                "NAAMA_MAX_IMAGE_BYTES": "7654321",
             },
             clear=False,
         ):
@@ -58,6 +62,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.mumble_status_wait_seconds, 2)
         self.assertEqual(config.mumble_monitor_interval_seconds, 10)
         self.assertEqual(config.mumble_tele_chat_id, -100123456789)
+        self.assertEqual(config.naama_model_name, "custom-naama-seg.pt")
+        self.assertEqual(config.naama_confidence_threshold, 0.25)
+        self.assertEqual(config.naama_mask_threshold, 0.45)
+        self.assertEqual(config.naama_max_image_bytes, 7654321)
 
     def test_rejects_invalid_mumble_monitor_interval(self) -> None:
         with patch.dict(

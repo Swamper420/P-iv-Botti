@@ -58,7 +58,7 @@ def _build_handler(
         photo_data = await tg_file.download_as_bytearray()
         photo_bytes = bytes(photo_data)
 
-        if len(photo_bytes) > config.deepfry_max_image_bytes:
+        if len(photo_bytes) > config.naama_max_image_bytes:
             await reply_in_chunks(
                 update,
                 "Kuva on liian suuri !naama-käsittelyyn.",
@@ -70,9 +70,9 @@ def _build_handler(
             compose_naama_image,
             photo_bytes,
             assets_dir=config.storage_dir / "naama",
-            model_name=config.deepfry_model_name,
-            confidence_threshold=config.deepfry_confidence_threshold,
-            mask_threshold=config.deepfry_mask_threshold,
+            model_name=config.naama_model_name,
+            confidence_threshold=config.naama_confidence_threshold,
+            mask_threshold=config.naama_mask_threshold,
         )
 
         if not processed:

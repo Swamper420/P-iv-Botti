@@ -57,6 +57,10 @@ class BotConfig:
     deepfry_confidence_threshold: float = 0.15
     deepfry_mask_threshold: float = 0.35
     deepfry_max_image_bytes: int = 10_000_000
+    naama_model_name: str = "yolo26n-seg.pt"
+    naama_confidence_threshold: float = 0.15
+    naama_mask_threshold: float = 0.35
+    naama_max_image_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -98,6 +102,21 @@ class BotConfig:
         deepfry_max_image_bytes = int(os.getenv("DEEPFRY_MAX_IMAGE_BYTES", "10000000"))
         if deepfry_max_image_bytes < 1:
             raise ValueError("DEEPFRY_MAX_IMAGE_BYTES must be >= 1")
+        naama_confidence_threshold = float(
+            os.getenv("NAAMA_CONFIDENCE_THRESHOLD", str(deepfry_confidence_threshold))
+        )
+        if not 0 <= naama_confidence_threshold <= 1:
+            raise ValueError("NAAMA_CONFIDENCE_THRESHOLD must be between 0 and 1")
+        naama_mask_threshold = float(
+            os.getenv("NAAMA_MASK_THRESHOLD", str(deepfry_mask_threshold))
+        )
+        if not 0 <= naama_mask_threshold <= 1:
+            raise ValueError("NAAMA_MASK_THRESHOLD must be between 0 and 1")
+        naama_max_image_bytes = int(
+            os.getenv("NAAMA_MAX_IMAGE_BYTES", str(deepfry_max_image_bytes))
+        )
+        if naama_max_image_bytes < 1:
+            raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
 
         mumble_tele_chat_id_raw = os.getenv("MUMBLE_TELE_CHAT_ID", "").strip()
         mumble_tele_chat_id = int(mumble_tele_chat_id_raw) if mumble_tele_chat_id_raw else None
@@ -156,4 +175,10 @@ class BotConfig:
             deepfry_confidence_threshold=deepfry_confidence_threshold,
             deepfry_mask_threshold=deepfry_mask_threshold,
             deepfry_max_image_bytes=deepfry_max_image_bytes,
+            naama_model_name=os.getenv(
+                "NAAMA_MODEL_NAME", os.getenv("DEEPFRY_MODEL_NAME", "yolo26n-seg.pt")
+            ).strip(),
+            naama_confidence_threshold=naama_confidence_threshold,
+            naama_mask_threshold=naama_mask_threshold,
+            naama_max_image_bytes=naama_max_image_bytes,
         )
