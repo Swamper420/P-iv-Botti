@@ -81,7 +81,7 @@ def _build_handler(
                 update,
                 (
                     "Naama-kuvan käsittely epäonnistui. Varmista, että storage/naama sisältää "
-                    "background*, hat*, suit*, gloves*, cigar* ja sun* -kuvia."
+                    "background*, hat*, cigar* ja sun* -kuvia."
                 ),
                 config.max_reply_length,
             )

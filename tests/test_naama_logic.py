@@ -111,8 +111,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(30, 50))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(20, 10))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(24, 18))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(22, 12))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(10, 4))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(12, 12))
 
@@ -137,10 +135,10 @@ class NaamaLogicTests(unittest.TestCase):
         segment_model = _DummyModel([mask], [0.0])
         mock_pose_keypoints = np.zeros((1, 17, 3), dtype=np.float32)
         mock_pose_keypoints[0, 0] = [42.0, 28.0, 0.9]  # nose
+        mock_pose_keypoints[0, 1] = [37.0, 24.0, 0.9]  # left eye
+        mock_pose_keypoints[0, 2] = [48.0, 26.0, 0.9]  # right eye
         mock_pose_keypoints[0, 5] = [28.0, 40.0, 0.9]  # left shoulder
         mock_pose_keypoints[0, 6] = [53.0, 44.0, 0.9]  # right shoulder
-        mock_pose_keypoints[0, 9] = [24.0, 58.0, 0.9]  # left wrist
-        mock_pose_keypoints[0, 10] = [58.0, 62.0, 0.9]  # right wrist
         pose_model = _DummyModel(keypoints=mock_pose_keypoints)
         loaded_model_names: list[str] = []
 
@@ -154,8 +152,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(80, 80))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
 
@@ -196,8 +192,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(80, 80))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
 
@@ -220,10 +214,10 @@ class NaamaLogicTests(unittest.TestCase):
         segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 90.0]])
         keypoints = np.zeros((1, 17, 3), dtype=np.float32)
         keypoints[0, 0] = [40.0, 30.0, 0.9]  # nose
+        keypoints[0, 1] = [33.0, 34.0, 0.9]  # left eye
+        keypoints[0, 2] = [51.0, 38.0, 0.9]  # right eye
         keypoints[0, 5] = [30.0, 44.0, 0.9]  # left shoulder
         keypoints[0, 6] = [50.0, 44.0, 0.9]  # right shoulder
-        keypoints[0, 9] = [28.0, 62.0, 0.9]  # left wrist
-        keypoints[0, 10] = [56.0, 62.0, 0.9]  # right wrist
         pose_model = _DummyModel(keypoints=keypoints)
 
         def model_loader(model_name: str) -> _DummyModel:
@@ -245,8 +239,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(100, 100))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
 
@@ -260,21 +252,22 @@ class NaamaLogicTests(unittest.TestCase):
                 )
 
         self.assertIsNotNone(output)
-        self.assertEqual(len(overlay_calls), 5)
-        self.assertEqual(overlay_calls[0]["width"], 19.0)  # hat width from head box
-        self.assertEqual(overlay_calls[1]["width"], 32.0)  # suit width from body box
-        self.assertEqual(overlay_calls[2]["width"], 37.0)  # gloves width from hand box span
-        self.assertEqual(overlay_calls[3]["width"], 9.0)  # cigar width from mouth box
+        self.assertEqual(len(overlay_calls), 3)
+        self.assertEqual(overlay_calls[0]["width"], 16.0)  # hat width from head box + depth scale
+        self.assertAlmostEqual(overlay_calls[0]["angle"], 5.64, places=1)  # hat uses eye rotation
+        self.assertEqual(overlay_calls[1]["width"], 7.0)  # cigar width from mouth box + depth scale
+        self.assertAlmostEqual(overlay_calls[1]["angle"], 9.4, places=1)  # cigar uses eye rotation
+        self.assertEqual(overlay_calls[2]["width"], 22.0)  # sun width based on output width
 
-    def test_compose_naama_image_uses_hand_orientation_when_shoulders_missing(self) -> None:
+    def test_compose_naama_image_uses_shoulder_orientation_when_eyes_missing(self) -> None:
         source = np.full((80, 80, 3), 30, dtype=np.uint8)
         source_bytes = _png_bytes_from_rgb(source)
         mask = np.zeros((80, 80), dtype=np.float32)
         mask[10:70, 20:60] = 1.0
         segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 70.0]])
         keypoints = np.zeros((1, 17, 3), dtype=np.float32)
-        keypoints[0, 9] = [25.0, 60.0, 0.9]  # left wrist
-        keypoints[0, 10] = [65.0, 45.0, 0.9]  # right wrist
+        keypoints[0, 5] = [25.0, 55.0, 0.9]  # left shoulder
+        keypoints[0, 6] = [65.0, 40.0, 0.9]  # right shoulder
         pose_model = _DummyModel(keypoints=keypoints)
 
         def model_loader(model_name: str) -> _DummyModel:
@@ -291,8 +284,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(80, 80))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
 
@@ -306,9 +297,10 @@ class NaamaLogicTests(unittest.TestCase):
                 )
 
         self.assertIsNotNone(output)
-        self.assertEqual(len(overlay_calls), 5)
-        self.assertAlmostEqual(overlay_calls[0]["angle"], -10.44, places=1)  # hat uses fallback shoulder angle
-        self.assertAlmostEqual(overlay_calls[2]["angle"], -18.56, places=1)  # gloves use hand angle
+        self.assertEqual(len(overlay_calls), 3)
+        self.assertAlmostEqual(overlay_calls[0]["angle"], -9.25, places=1)  # hat uses shoulder fallback
+        self.assertAlmostEqual(overlay_calls[1]["angle"], -15.42, places=1)  # cigar uses shoulder fallback
+        self.assertEqual(overlay_calls[2]["angle"], 0.0)  # sun has no rotation
 
     def test_compose_naama_image_returns_none_without_required_assets(self) -> None:
         source = np.full((60, 60, 3), 50, dtype=np.uint8)
@@ -340,8 +332,6 @@ class NaamaLogicTests(unittest.TestCase):
             assets_dir = Path(tmp_dir)
             _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(40, 40))
             _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(20, 10))
-            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(25, 20))
-            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(25, 14))
             _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(10, 4))
             _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(14, 14))
 

@@ -15,13 +15,13 @@ from PIL import Image, ImageOps
 
 LOGGER = logging.getLogger(__name__)
 _PERSON_CLASS_ID = 0
-_ACCESSORY_NAMES = ("hat", "suit", "gloves", "cigar", "sun")
+_ACCESSORY_NAMES = ("hat", "cigar", "sun")
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _COCO_NOSE_INDEX = 0
+_COCO_LEFT_EYE_INDEX = 1
+_COCO_RIGHT_EYE_INDEX = 2
 _COCO_LEFT_SHOULDER_INDEX = 5
 _COCO_RIGHT_SHOULDER_INDEX = 6
-_COCO_LEFT_WRIST_INDEX = 9
-_COCO_RIGHT_WRIST_INDEX = 10
 _KEYPOINT_MIN_CONFIDENCE = 0.2
 _HEAD_WIDTH_MAX_RATIO = 0.9
 _HEAD_WIDTH_MIN_RATIO = 0.28
@@ -31,18 +31,9 @@ _MOUTH_WIDTH_MIN_RATIO = 0.14
 _MOUTH_WIDTH_SHOULDER_RATIO = 0.26
 _MOUTH_Y_OFFSET_MIN = 2.0
 _MOUTH_Y_OFFSET_HEAD_RATIO = 0.38
-_HAND_WIDTH_MIN_RATIO = 0.14
-_HAND_WIDTH_SHOULDER_RATIO = 0.22
-_LEFT_HAND_FALLBACK_X_RATIO = 0.2
-_RIGHT_HAND_FALLBACK_X_RATIO = 0.8
-_HAND_FALLBACK_Y_RATIO = 0.63
-_BODY_WIDTH_MIN_RATIO = 0.65
-_BODY_WIDTH_SHOULDER_RATIO = 1.15
-_BODY_CENTER_BELOW_SHOULDERS_RATIO = 0.33
-_BODY_CENTER_FALLBACK_OFFSET_RATIO = 0.16
+_DEPTH_SCALE_RATIO = 0.86
+_DEPTH_BOTTOM_MARGIN_RATIO = 0.02
 _HAT_ROTATION_SCALE = 0.45
-_SUIT_ROTATION_SCALE = 0.25
-_GLOVES_ROTATION_SCALE = 0.8
 _CIGAR_ROTATION_SCALE = 0.75
 _MODEL_CACHE: dict[str, Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
@@ -53,15 +44,9 @@ _MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
 class _NaamaAnchors:
     top_head: tuple[int, int]
     mouth: tuple[int, int]
-    left_hand: tuple[int, int]
-    right_hand: tuple[int, int]
-    body_center: tuple[int, int]
-    shoulder_angle_degrees: float
-    hands_angle_degrees: float
+    head_angle_degrees: float
     head_width: int
     mouth_width: int
-    hands_width: int
-    body_width: int
 
 
 @dataclass(frozen=True)
@@ -276,7 +261,7 @@ def _extract_pose_keypoints(
 
     if keypoints_array.ndim == 2:
         keypoints_array = keypoints_array[np.newaxis, ...]
-    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_WRIST_INDEX:
+    if keypoints_array.ndim != 3 or keypoints_array.shape[1] <= _COCO_RIGHT_SHOULDER_INDEX:
         return None
     if keypoints_array.shape[2] < 2:
         return None
@@ -333,8 +318,6 @@ def _build_naama_anchors(
     )
     person_width = person_detection.width
     person_height = person_detection.height
-    center_x = left + (person_width // 2)
-    center_y = top + (person_height // 2)
     shoulder_span = max(1.0, float(person_width) * 0.35)
 
     y_coords, x_coords = np.where(person_mask)
@@ -344,10 +327,10 @@ def _build_naama_anchors(
     top_head = (top_head_x, top)
 
     nose = _extract_anchor_from_keypoints(pose_keypoints, _COCO_NOSE_INDEX)
+    left_eye = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_EYE_INDEX)
+    right_eye = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_EYE_INDEX)
     left_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_SHOULDER_INDEX)
     right_shoulder = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_SHOULDER_INDEX)
-    left_wrist = _extract_anchor_from_keypoints(pose_keypoints, _COCO_LEFT_WRIST_INDEX)
-    right_wrist = _extract_anchor_from_keypoints(pose_keypoints, _COCO_RIGHT_WRIST_INDEX)
 
     if left_shoulder is not None and right_shoulder is not None:
         shoulder_span = max(
@@ -379,28 +362,6 @@ def _build_naama_anchors(
             )
         ),
     )
-    hand_box_width = max(
-        1,
-        int(
-            round(
-                max(
-                    person_width * _HAND_WIDTH_MIN_RATIO,
-                    shoulder_span * _HAND_WIDTH_SHOULDER_RATIO,
-                )
-            )
-        ),
-    )
-    body_width = max(
-        1,
-        int(
-            round(
-                max(
-                    person_width * _BODY_WIDTH_MIN_RATIO,
-                    shoulder_span * _BODY_WIDTH_SHOULDER_RATIO,
-                )
-            )
-        ),
-    )
 
     default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=_DEFAULT_MOUTH_Y_RATIO)
     if nose is not None:
@@ -412,62 +373,29 @@ def _build_naama_anchors(
         mouth = default_mouth
     mouth = _clamp_point(mouth, left=left, top=top, right=right, bottom=bottom)
 
-    left_hand = (
-        left_wrist
-        if left_wrist is not None
-        else _mask_point(
-            person_mask, x_ratio=_LEFT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
+    if left_eye is not None and right_eye is not None:
+        head_angle = math.degrees(
+            math.atan2(
+                float(right_eye[1] - left_eye[1]),
+                float(right_eye[0] - left_eye[0]),
+            )
         )
-    )
-    right_hand = (
-        right_wrist
-        if right_wrist is not None
-        else _mask_point(
-            person_mask, x_ratio=_RIGHT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
-        )
-    )
-    left_hand = _clamp_point(left_hand, left=left, top=top, right=right, bottom=bottom)
-    right_hand = _clamp_point(right_hand, left=left, top=top, right=right, bottom=bottom)
-    if left_hand == right_hand:
-        hands_angle = 0.0
-    else:
-        hands_angle = math.degrees(
-            math.atan2(float(right_hand[1] - left_hand[1]), float(right_hand[0] - left_hand[0]))
-        )
-
-    if left_shoulder is not None and right_shoulder is not None:
-        shoulder_angle = math.degrees(
+    elif left_shoulder is not None and right_shoulder is not None:
+        head_angle = math.degrees(
             math.atan2(
                 float(right_shoulder[1] - left_shoulder[1]),
                 float(right_shoulder[0] - left_shoulder[0]),
             )
         )
-        body_center = (
-            int(round((left_shoulder[0] + right_shoulder[0]) / 2.0)),
-            int(
-                round(
-                    (left_shoulder[1] + right_shoulder[1]) / 2.0
-                    + person_height * _BODY_CENTER_BELOW_SHOULDERS_RATIO
-                )
-            ),
-        )
     else:
-        shoulder_angle = hands_angle
-        body_center = (center_x, center_y + int(round(person_height * _BODY_CENTER_FALLBACK_OFFSET_RATIO)))
-    body_center = _clamp_point(body_center, left=left, top=top, right=right, bottom=bottom)
+        head_angle = 0.0
 
     return _NaamaAnchors(
         top_head=top_head,
         mouth=mouth,
-        left_hand=left_hand,
-        right_hand=right_hand,
-        body_center=body_center,
-        shoulder_angle_degrees=shoulder_angle,
-        hands_angle_degrees=hands_angle,
+        head_angle_degrees=head_angle,
         head_width=head_width,
         mouth_width=mouth_width,
-        hands_width=max(hand_box_width * 2, abs(right_hand[0] - left_hand[0]) + hand_box_width),
-        body_width=body_width,
     )
 
 
@@ -561,48 +489,44 @@ def compose_naama_image(
     person_pixels = np.asarray(source_rgba, dtype=np.uint8).copy()
     person_pixels[..., 3] = alpha_channel
     person_layer = Image.fromarray(person_pixels, mode="RGBA")
-    composed = Image.alpha_composite(composed, person_layer)
+    depth_width = max(1, int(round(source_rgba.width * _DEPTH_SCALE_RATIO)))
+    depth_height = max(1, int(round(source_rgba.height * _DEPTH_SCALE_RATIO)))
+    depth_x = (source_rgba.width - depth_width) // 2
+    depth_y = source_rgba.height - depth_height - int(round(source_rgba.height * _DEPTH_BOTTOM_MARGIN_RATIO))
+    depth_person = person_layer.resize((depth_width, depth_height), Image.Resampling.LANCZOS)
+    depth_layer = Image.new("RGBA", source_rgba.size, (0, 0, 0, 0))
+    depth_layer.paste(depth_person, (depth_x, depth_y), depth_person)
+    composed = Image.alpha_composite(composed, depth_layer)
 
     person_height = person_detection.height
     anchors = _build_naama_anchors(person_mask, person_detection, pose_keypoints)
-    hand_midpoint_x = int(round((anchors.left_hand[0] + anchors.right_hand[0]) / 2.0))
-    hand_midpoint_y = int(round((anchors.left_hand[1] + anchors.right_hand[1]) / 2.0))
+    scaled_person_height = max(1, int(round(person_height * _DEPTH_SCALE_RATIO)))
+    scaled_top_head = (
+        int(round(anchors.top_head[0] * _DEPTH_SCALE_RATIO)) + depth_x,
+        int(round(anchors.top_head[1] * _DEPTH_SCALE_RATIO)) + depth_y,
+    )
+    scaled_mouth = (
+        int(round(anchors.mouth[0] * _DEPTH_SCALE_RATIO)) + depth_x,
+        int(round(anchors.mouth[1] * _DEPTH_SCALE_RATIO)) + depth_y,
+    )
 
     with Image.open(rng.choice(accessory_candidates["hat"])) as hat_image:
         _paste_scaled_overlay(
             composed,
             hat_image.convert("RGBA"),
-            center_x=anchors.top_head[0],
-            center_y=anchors.top_head[1] - max(1, int(round(anchors.head_width * 0.45))),
-            width=max(1, int(round(anchors.head_width * 1.35))),
-            angle_degrees=anchors.shoulder_angle_degrees * _HAT_ROTATION_SCALE,
-        )
-    with Image.open(rng.choice(accessory_candidates["suit"])) as suit_image:
-        _paste_scaled_overlay(
-            composed,
-            suit_image.convert("RGBA"),
-            center_x=anchors.body_center[0],
-            center_y=anchors.body_center[1] + int(person_height * 0.2),
-            width=max(1, int(round(anchors.body_width * 1.2))),
-            angle_degrees=anchors.shoulder_angle_degrees * _SUIT_ROTATION_SCALE,
-        )
-    with Image.open(rng.choice(accessory_candidates["gloves"])) as gloves_image:
-        _paste_scaled_overlay(
-            composed,
-            gloves_image.convert("RGBA"),
-            center_x=hand_midpoint_x,
-            center_y=hand_midpoint_y,
-            width=max(1, int(round(anchors.hands_width * 1.1))),
-            angle_degrees=anchors.hands_angle_degrees * _GLOVES_ROTATION_SCALE,
+            center_x=scaled_top_head[0],
+            center_y=scaled_top_head[1] - max(1, int(round(anchors.head_width * _DEPTH_SCALE_RATIO * 0.45))),
+            width=max(1, int(round(anchors.head_width * _DEPTH_SCALE_RATIO * 1.35))),
+            angle_degrees=anchors.head_angle_degrees * _HAT_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["cigar"])) as cigar_image:
         _paste_scaled_overlay(
             composed,
             cigar_image.convert("RGBA"),
-            center_x=anchors.mouth[0] + int(round(anchors.mouth_width * 0.65)),
-            center_y=anchors.mouth[1] + int(person_height * 0.02),
-            width=max(1, int(round(anchors.mouth_width * 1.45))),
-            angle_degrees=anchors.shoulder_angle_degrees * _CIGAR_ROTATION_SCALE,
+            center_x=scaled_mouth[0] + int(round(anchors.mouth_width * _DEPTH_SCALE_RATIO * 0.65)),
+            center_y=scaled_mouth[1] + int(scaled_person_height * 0.02),
+            width=max(1, int(round(anchors.mouth_width * _DEPTH_SCALE_RATIO * 1.45))),
+            angle_degrees=anchors.head_angle_degrees * _CIGAR_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["sun"])) as sun_image:
         _paste_scaled_overlay(
