@@ -80,7 +80,7 @@ class _DummyModel:
 
 
 class NaamaLogicTests(unittest.TestCase):
-    def test_compose_naama_image_applies_source_exif_orientation_before_detection(self) -> None:
+    def test_handles_exif_oriented_source_image(self) -> None:
         source = np.full((30, 50, 3), 45, dtype=np.uint8)
         source_bytes = _jpeg_bytes_from_rgb_with_orientation(source, orientation=6)
         mask = np.ones((50, 30), dtype=np.float32)
