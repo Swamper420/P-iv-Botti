@@ -4,11 +4,13 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
+import bot.commands.naama_logic as naama_logic
 from bot.commands.naama_logic import compose_naama_image
 
 
@@ -45,10 +47,21 @@ class _MaskWrapper:
 
 class _DummyResult:
     def __init__(
-        self, masks: list[np.ndarray], classes: list[float], keypoints: np.ndarray | None = None
+        self,
+        masks: list[np.ndarray],
+        classes: list[float],
+        keypoints: np.ndarray | None = None,
+        boxes_xyxy: list[list[float]] | None = None,
     ) -> None:
         self.masks = type("_DummyMasks", (), {"data": [_MaskWrapper(mask) for mask in masks]})()
-        self.boxes = type("_DummyBoxes", (), {"cls": np.array(classes, dtype=np.float32)})()
+        self.boxes = type(
+            "_DummyBoxes",
+            (),
+            {
+                "cls": np.array(classes, dtype=np.float32),
+                "xyxy": np.asarray(boxes_xyxy or [], dtype=np.float32),
+            },
+        )()
         if keypoints is not None:
             self.keypoints = type(
                 "_DummyKeypoints", (), {"data": _MaskWrapper(np.asarray(keypoints, dtype=np.float32))}
@@ -61,10 +74,12 @@ class _DummyModel:
         masks: list[np.ndarray] | None = None,
         classes: list[float] | None = None,
         keypoints: np.ndarray | None = None,
+        boxes_xyxy: list[list[float]] | None = None,
     ) -> None:
         self._masks = masks
         self._classes = classes
         self._keypoints = keypoints
+        self._boxes_xyxy = boxes_xyxy
         self.last_predict_kwargs: dict[str, Any] = {}
         self.predict_calls: list[dict[str, Any]] = []
 
@@ -76,7 +91,7 @@ class _DummyModel:
             if self._keypoints is None:
                 return []
             return [_DummyResult([], [], keypoints=self._keypoints)]
-        return [_DummyResult(self._masks or [], self._classes or [])]
+        return [_DummyResult(self._masks or [], self._classes or [], boxes_xyxy=self._boxes_xyxy)]
 
 
 class NaamaLogicTests(unittest.TestCase):
@@ -197,6 +212,103 @@ class NaamaLogicTests(unittest.TestCase):
         self.assertIsNotNone(output)
         self.assertEqual(segment_model.predict_calls[0]["task"], "segment")
         self.assertEqual(pose_model.predict_calls[0]["task"], "pose")
+
+    def test_compose_naama_image_uses_detection_box_sizes_for_overlays(self) -> None:
+        source = np.full((100, 100, 3), 30, dtype=np.uint8)
+        source_bytes = _png_bytes_from_rgb(source)
+        mask = np.ones((100, 100), dtype=np.float32)
+        segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 90.0]])
+        keypoints = np.zeros((1, 17, 3), dtype=np.float32)
+        keypoints[0, 0] = [40.0, 30.0, 0.9]  # nose
+        keypoints[0, 5] = [30.0, 44.0, 0.9]  # left shoulder
+        keypoints[0, 6] = [50.0, 44.0, 0.9]  # right shoulder
+        keypoints[0, 9] = [28.0, 62.0, 0.9]  # left wrist
+        keypoints[0, 10] = [56.0, 62.0, 0.9]  # right wrist
+        pose_model = _DummyModel(keypoints=keypoints)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            if model_name.endswith("-pose.pt"):
+                return pose_model
+            return segment_model
+
+        overlay_calls: list[dict[str, float]] = []
+
+        def capture_overlay(*args: object, **kwargs: object) -> None:
+            overlay_calls.append(
+                {
+                    "width": float(kwargs["width"]),
+                    "angle": float(kwargs.get("angle_degrees", 0.0)),
+                }
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            assets_dir = Path(tmp_dir)
+            _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(100, 100))
+            _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
+            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
+            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
+            _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
+            _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
+
+            with patch.object(naama_logic, "_paste_scaled_overlay", side_effect=capture_overlay):
+                output = compose_naama_image(
+                    source_bytes,
+                    assets_dir=assets_dir,
+                    model_name="yolo26n-seg.pt",
+                    model_loader=model_loader,
+                    random_seed=5,
+                )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(len(overlay_calls), 5)
+        self.assertEqual(overlay_calls[0]["width"], 19.0)  # hat width from head box
+        self.assertEqual(overlay_calls[1]["width"], 32.0)  # suit width from body box
+        self.assertEqual(overlay_calls[2]["width"], 37.0)  # gloves width from hand box span
+        self.assertEqual(overlay_calls[3]["width"], 9.0)  # cigar width from mouth box
+
+    def test_compose_naama_image_uses_hand_orientation_when_shoulders_missing(self) -> None:
+        source = np.full((80, 80, 3), 30, dtype=np.uint8)
+        source_bytes = _png_bytes_from_rgb(source)
+        mask = np.zeros((80, 80), dtype=np.float32)
+        mask[10:70, 20:60] = 1.0
+        segment_model = _DummyModel([mask], [0.0], boxes_xyxy=[[20.0, 10.0, 60.0, 70.0]])
+        keypoints = np.zeros((1, 17, 3), dtype=np.float32)
+        keypoints[0, 9] = [25.0, 60.0, 0.9]  # left wrist
+        keypoints[0, 10] = [65.0, 45.0, 0.9]  # right wrist
+        pose_model = _DummyModel(keypoints=keypoints)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            if model_name.endswith("-pose.pt"):
+                return pose_model
+            return segment_model
+
+        overlay_calls: list[dict[str, float]] = []
+
+        def capture_overlay(*args: object, **kwargs: object) -> None:
+            overlay_calls.append({"angle": float(kwargs.get("angle_degrees", 0.0))})
+
+        with TemporaryDirectory() as tmp_dir:
+            assets_dir = Path(tmp_dir)
+            _create_asset(assets_dir / "background1.png", (20, 40, 90, 255), size=(80, 80))
+            _create_asset(assets_dir / "hat1.png", (255, 0, 0, 180), size=(40, 20))
+            _create_asset(assets_dir / "suit1.png", (0, 255, 0, 180), size=(60, 45))
+            _create_asset(assets_dir / "gloves1.png", (0, 0, 255, 180), size=(60, 25))
+            _create_asset(assets_dir / "cigar1.png", (255, 255, 0, 200), size=(18, 8))
+            _create_asset(assets_dir / "sun1.png", (255, 140, 0, 220), size=(25, 25))
+
+            with patch.object(naama_logic, "_paste_scaled_overlay", side_effect=capture_overlay):
+                output = compose_naama_image(
+                    source_bytes,
+                    assets_dir=assets_dir,
+                    model_name="yolo26n-seg.pt",
+                    model_loader=model_loader,
+                    random_seed=5,
+                )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(len(overlay_calls), 5)
+        self.assertAlmostEqual(overlay_calls[0]["angle"], -10.44, places=1)  # hat uses fallback shoulder angle
+        self.assertAlmostEqual(overlay_calls[2]["angle"], -18.56, places=1)  # gloves use hand angle
 
     def test_compose_naama_image_returns_none_without_required_assets(self) -> None:
         source = np.full((60, 60, 3), 50, dtype=np.uint8)
