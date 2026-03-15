@@ -23,6 +23,16 @@ _COCO_RIGHT_SHOULDER_INDEX = 6
 _COCO_LEFT_WRIST_INDEX = 9
 _COCO_RIGHT_WRIST_INDEX = 10
 _KEYPOINT_MIN_CONFIDENCE = 0.2
+_NOSE_TO_MOUTH_RATIO = 0.08
+_LEFT_HAND_FALLBACK_X_RATIO = 0.12
+_RIGHT_HAND_FALLBACK_X_RATIO = 0.88
+_HAND_FALLBACK_Y_RATIO = 0.63
+_BODY_CENTER_BELOW_SHOULDERS_RATIO = 0.33
+_BODY_CENTER_FALLBACK_OFFSET_RATIO = 0.16
+_HAT_ROTATION_SCALE = 0.45
+_SUIT_ROTATION_SCALE = 0.25
+_GLOVES_ROTATION_SCALE = 0.8
+_CIGAR_ROTATION_SCALE = 0.75
 _MODEL_CACHE: dict[str, Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 _MODEL_LOAD_LOCKS: dict[str, threading.Lock] = {}
@@ -260,11 +270,21 @@ def _build_naama_anchors(person_mask: np.ndarray, pose_keypoints: np.ndarray | N
     default_mouth = _mask_point(person_mask, x_ratio=0.5, y_ratio=0.42)
     mouth = (
         nose[0],
-        int(round(nose[1] + person_height * 0.08)),
+        int(round(nose[1] + person_height * _NOSE_TO_MOUTH_RATIO)),
     ) if nose is not None else default_mouth
-    left_hand = left_wrist if left_wrist is not None else _mask_point(person_mask, x_ratio=0.12, y_ratio=0.63)
+    left_hand = (
+        left_wrist
+        if left_wrist is not None
+        else _mask_point(
+            person_mask, x_ratio=_LEFT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
+        )
+    )
     right_hand = (
-        right_wrist if right_wrist is not None else _mask_point(person_mask, x_ratio=0.88, y_ratio=0.63)
+        right_wrist
+        if right_wrist is not None
+        else _mask_point(
+            person_mask, x_ratio=_RIGHT_HAND_FALLBACK_X_RATIO, y_ratio=_HAND_FALLBACK_Y_RATIO
+        )
     )
 
     if left_shoulder is not None and right_shoulder is not None:
@@ -276,11 +296,16 @@ def _build_naama_anchors(person_mask: np.ndarray, pose_keypoints: np.ndarray | N
         )
         body_center = (
             int(round((left_shoulder[0] + right_shoulder[0]) / 2.0)),
-            int(round((left_shoulder[1] + right_shoulder[1]) / 2.0 + person_height * 0.33)),
+            int(
+                round(
+                    (left_shoulder[1] + right_shoulder[1]) / 2.0
+                    + person_height * _BODY_CENTER_BELOW_SHOULDERS_RATIO
+                )
+            ),
         )
     else:
         shoulder_angle = 0.0
-        body_center = (center_x, center_y + int(round(person_height * 0.16)))
+        body_center = (center_x, center_y + int(round(person_height * _BODY_CENTER_FALLBACK_OFFSET_RATIO)))
 
     return _NaamaAnchors(
         top_head=top_head,
@@ -389,6 +414,8 @@ def compose_naama_image(
     person_height = max(1, bottom - top + 1)
     anchors = _build_naama_anchors(person_mask, pose_keypoints)
     hand_span = max(1, abs(anchors.right_hand[0] - anchors.left_hand[0]))
+    hand_midpoint_x = int(round((anchors.left_hand[0] + anchors.right_hand[0]) / 2.0))
+    hand_midpoint_y = int(round((anchors.left_hand[1] + anchors.right_hand[1]) / 2.0))
 
     with Image.open(rng.choice(accessory_candidates["hat"])) as hat_image:
         _paste_scaled_overlay(
@@ -397,7 +424,7 @@ def compose_naama_image(
             center_x=anchors.top_head[0],
             center_y=anchors.top_head[1] - int(person_height * 0.16),
             width=int(person_width * 0.95),
-            angle_degrees=anchors.shoulder_angle_degrees * 0.45,
+            angle_degrees=anchors.shoulder_angle_degrees * _HAT_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["suit"])) as suit_image:
         _paste_scaled_overlay(
@@ -406,16 +433,16 @@ def compose_naama_image(
             center_x=anchors.body_center[0],
             center_y=anchors.body_center[1] + int(person_height * 0.2),
             width=int(person_width * 1.15),
-            angle_degrees=anchors.shoulder_angle_degrees * 0.25,
+            angle_degrees=anchors.shoulder_angle_degrees * _SUIT_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["gloves"])) as gloves_image:
         _paste_scaled_overlay(
             composed,
             gloves_image.convert("RGBA"),
-            center_x=int(round((anchors.left_hand[0] + anchors.right_hand[0]) / 2.0)),
-            center_y=int(round((anchors.left_hand[1] + anchors.right_hand[1]) / 2.0)),
+            center_x=hand_midpoint_x,
+            center_y=hand_midpoint_y,
             width=max(int(person_width * 0.9), int(hand_span * 1.25)),
-            angle_degrees=anchors.shoulder_angle_degrees * 0.8,
+            angle_degrees=anchors.shoulder_angle_degrees * _GLOVES_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["cigar"])) as cigar_image:
         _paste_scaled_overlay(
@@ -424,7 +451,7 @@ def compose_naama_image(
             center_x=anchors.mouth[0] + int(person_width * 0.08),
             center_y=anchors.mouth[1] + int(person_height * 0.02),
             width=max(1, int(person_width * 0.28)),
-            angle_degrees=anchors.shoulder_angle_degrees * 0.75,
+            angle_degrees=anchors.shoulder_angle_degrees * _CIGAR_ROTATION_SCALE,
         )
     with Image.open(rng.choice(accessory_candidates["sun"])) as sun_image:
         _paste_scaled_overlay(

@@ -77,13 +77,13 @@ class NaamaLogicTests(unittest.TestCase):
         mask = np.zeros((80, 80), dtype=np.float32)
         mask[10:70, 20:60] = 1.0
         segment_model = _DummyModel([mask], [0.0])
-        pose_keypoints = np.zeros((1, 17, 3), dtype=np.float32)
-        pose_keypoints[0, 0] = [42.0, 28.0, 0.9]  # nose
-        pose_keypoints[0, 5] = [28.0, 40.0, 0.9]  # left shoulder
-        pose_keypoints[0, 6] = [53.0, 44.0, 0.9]  # right shoulder
-        pose_keypoints[0, 9] = [24.0, 58.0, 0.9]  # left wrist
-        pose_keypoints[0, 10] = [58.0, 62.0, 0.9]  # right wrist
-        pose_model = _DummyModel(keypoints=pose_keypoints)
+        mock_pose_keypoints = np.zeros((1, 17, 3), dtype=np.float32)
+        mock_pose_keypoints[0, 0] = [42.0, 28.0, 0.9]  # nose
+        mock_pose_keypoints[0, 5] = [28.0, 40.0, 0.9]  # left shoulder
+        mock_pose_keypoints[0, 6] = [53.0, 44.0, 0.9]  # right shoulder
+        mock_pose_keypoints[0, 9] = [24.0, 58.0, 0.9]  # left wrist
+        mock_pose_keypoints[0, 10] = [58.0, 62.0, 0.9]  # right wrist
+        pose_model = _DummyModel(keypoints=mock_pose_keypoints)
         loaded_model_names: list[str] = []
 
         def model_loader(model_name: str) -> _DummyModel:
