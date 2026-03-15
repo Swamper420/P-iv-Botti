@@ -55,7 +55,9 @@ class CommandRegistrationTests(unittest.TestCase):
         register_commands(app, self._config())
 
         self.assertTrue(
-            {"aih", "help", "mumble", "paivaa", "stt", "weather"}.issubset(discovered_names)
+            {"aih", "deepfry", "help", "mumble", "paivaa", "stt", "weather"}.issubset(
+                discovered_names
+            )
         )
         self.assertEqual(len(app.handlers), expected_count)
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))

@@ -52,6 +52,9 @@ class BotConfig:
     mumble_startup_delay_seconds: int
     mumble_connect_retries: int = 2
     mumble_tele_chat_id: int | None = None
+    deepfry_model_name: str = "yolo26n-seg.pt"
+    deepfry_overlay_alpha: float = 0.45
+    deepfry_max_image_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -79,6 +82,12 @@ class BotConfig:
         mumble_connect_retries = int(os.getenv("MUMBLE_CONNECT_RETRIES", "2"))
         if mumble_connect_retries < 1:
             raise ValueError("MUMBLE_CONNECT_RETRIES must be >= 1")
+        deepfry_overlay_alpha = float(os.getenv("DEEPFRY_OVERLAY_ALPHA", "0.45"))
+        if not 0 <= deepfry_overlay_alpha <= 1:
+            raise ValueError("DEEPFRY_OVERLAY_ALPHA must be between 0 and 1")
+        deepfry_max_image_bytes = int(os.getenv("DEEPFRY_MAX_IMAGE_BYTES", "10000000"))
+        if deepfry_max_image_bytes < 1:
+            raise ValueError("DEEPFRY_MAX_IMAGE_BYTES must be >= 1")
 
         mumble_tele_chat_id_raw = os.getenv("MUMBLE_TELE_CHAT_ID", "").strip()
         mumble_tele_chat_id = int(mumble_tele_chat_id_raw) if mumble_tele_chat_id_raw else None
@@ -132,4 +141,7 @@ class BotConfig:
             mumble_monitor_interval_seconds=mumble_monitor_interval_seconds,
             mumble_startup_delay_seconds=mumble_startup_delay_seconds,
             mumble_tele_chat_id=mumble_tele_chat_id,
+            deepfry_model_name=os.getenv("DEEPFRY_MODEL_NAME", "yolo26n-seg.pt").strip(),
+            deepfry_overlay_alpha=deepfry_overlay_alpha,
+            deepfry_max_image_bytes=deepfry_max_image_bytes,
         )
