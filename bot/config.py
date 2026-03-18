@@ -61,6 +61,7 @@ class BotConfig:
     naama_confidence_threshold: float = 0.15
     naama_mask_threshold: float = 0.35
     naama_max_image_bytes: int = 10_000_000
+    analysoi_max_image_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -117,6 +118,11 @@ class BotConfig:
         )
         if naama_max_image_bytes < 1:
             raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
+        analysoi_max_image_bytes = int(
+            os.getenv("ANALYSOI_MAX_IMAGE_BYTES", "10000000")
+        )
+        if analysoi_max_image_bytes < 1:
+            raise ValueError("ANALYSOI_MAX_IMAGE_BYTES must be >= 1")
 
         mumble_tele_chat_id_raw = os.getenv("MUMBLE_TELE_CHAT_ID", "").strip()
         mumble_tele_chat_id = int(mumble_tele_chat_id_raw) if mumble_tele_chat_id_raw else None
@@ -179,4 +185,5 @@ class BotConfig:
             naama_confidence_threshold=naama_confidence_threshold,
             naama_mask_threshold=naama_mask_threshold,
             naama_max_image_bytes=naama_max_image_bytes,
+            analysoi_max_image_bytes=analysoi_max_image_bytes,
         )
