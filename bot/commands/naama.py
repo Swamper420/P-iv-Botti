@@ -66,11 +66,9 @@ def _build_handler(
             )
             return
 
-        # Simplified function call matching the new logic
         processed = await asyncio.to_thread(
             compose_naama_image,
             photo_bytes,
-            assets_dir=config.storage_dir / "naama",
             model_name=config.naama_model_name,
             confidence_threshold=config.naama_confidence_threshold,
             mask_threshold=config.naama_mask_threshold,
@@ -80,10 +78,7 @@ def _build_handler(
             LOGGER.error("!naama image processing failed")
             await reply_in_chunks(
                 update,
-                (
-                    "Naama-kuvan käsittely epäonnistui. Varmista, että storage/naama sisältää "
-                    "background*, hat*, cigar* ja sun* -kuvia."
-                ),
+                "Naama-kuvan käsittely epäonnistui. Kuvasta ei todennäköisesti löytynyt mitää kinostavaa.",
                 config.max_reply_length,
             )
             return
