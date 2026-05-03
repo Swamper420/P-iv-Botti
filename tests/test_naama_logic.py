@@ -153,6 +153,48 @@ class NaamaLogicTests(unittest.TestCase):
 
         self.assertIsNotNone(output)
 
+    def test_compose_naama_image_side_up(self) -> None:
+        source = np.full((80, 80, 3), 30, dtype=np.uint8)
+        source_bytes = _png_bytes_from_rgb(source)
+        mask = np.zeros((80, 80), dtype=np.float32)
+        mask[10:70, 20:60] = 1.0
+        segment_model = _DummyModel([mask], [0.0])
+        pose_model = _DummyModel(keypoints=None)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            return pose_model if "pose" in model_name else segment_model
+
+        output = compose_naama_image(
+            source_bytes,
+            model_name="yolo26n-seg.pt",
+            model_loader=model_loader,
+            action="mirror",
+            side="up",
+        )
+
+        self.assertIsNotNone(output)
+
+    def test_compose_naama_image_side_down(self) -> None:
+        source = np.full((80, 80, 3), 30, dtype=np.uint8)
+        source_bytes = _png_bytes_from_rgb(source)
+        mask = np.zeros((80, 80), dtype=np.float32)
+        mask[10:70, 20:60] = 1.0
+        segment_model = _DummyModel([mask], [0.0])
+        pose_model = _DummyModel(keypoints=None)
+
+        def model_loader(model_name: str) -> _DummyModel:
+            return pose_model if "pose" in model_name else segment_model
+
+        output = compose_naama_image(
+            source_bytes,
+            model_name="yolo26n-seg.pt",
+            model_loader=model_loader,
+            action="mirror",
+            side="down",
+        )
+
+        self.assertIsNotNone(output)
+
 
 if __name__ == "__main__":
     unittest.main()

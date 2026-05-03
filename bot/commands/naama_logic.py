@@ -42,7 +42,7 @@ def compose_naama_image(
     confidence_threshold: float = 0.25,
     mask_threshold: float = 0.35,
     action: Literal["mirror", "sticker"] = "mirror",
-    side: Literal["auto", "left", "right"] = "auto",
+    side: Literal["auto", "left", "right", "up", "down"] = "auto",
     model_loader: Any = None,
     **kwargs: object,
 ) -> bytes | None:
@@ -134,39 +134,44 @@ def compose_naama_image(
         cropped_target = target_layer.crop((cmin, rmin, cmax + 1, rmax + 1))
         width, height = cropped_target.size
         
-        if action == "sticker":
-            # For sticker, if mirrored, we mirror the cropped target before pasting.
-            # Otherwise we just paste it on the transparent canvas.
-            if side in ("left", "right") or side == "auto":
-                # Only apply mirroring if it was requested specifically.
-                # Actually, for sticker with o/v, we should mirror it.
-                # If "auto", do we mirror or just extract? User said "naamatarra separates person ... also has the same o/v override".
-                # Usually !naamatarra = just extract, !naamatarrao = extract and mirror right side.
-                pass
-                
-            if side != "auto":
-                # Find vertical split point relative to the crop
-                mirror_x = cmin + (cmax - cmin) // 2
-                if cls_id == 0 and pose_results and pose_results[0].keypoints is not None:
-                    kpts = pose_results[0].keypoints.data.cpu().numpy()
-                    if len(kpts) > idx:
-                        person_kpts = kpts[idx]
-                        if len(person_kpts) > 0:
-                            nose_pt = person_kpts[0]
-                            if float(nose_pt[2]) >= _KEYPOINT_MIN_CONFIDENCE:
-                                mirror_x = int(round(float(nose_pt[0])))
-                
-                mirror_x = max(cmin + 1, min(mirror_x, cmax - 1))
-                local_split_x = mirror_x - cmin
-                
-                if side == "left":
-                    use_left = True
-                elif side == "right":
-                    use_left = False
+        if side != "auto":
+            mirror_x = cmin + (cmax - cmin) // 2
+            mirror_y = rmin + (rmax - rmin) // 2
+            
+            if cls_id == 0 and pose_results and pose_results[0].keypoints is not None:
+                kpts = pose_results[0].keypoints.data.cpu().numpy()
+                if len(kpts) > idx:
+                    person_kpts = kpts[idx]
+                    if len(person_kpts) > 0:
+                        nose_pt = person_kpts[0]
+                        if float(nose_pt[2]) >= _KEYPOINT_MIN_CONFIDENCE:
+                            mirror_x = int(round(float(nose_pt[0])))
+                            mirror_y = int(round(float(nose_pt[1])))
+            
+            mirror_x = max(cmin + 1, min(mirror_x, cmax - 1))
+            mirror_y = max(rmin + 1, min(mirror_y, rmax - 1))
+            
+            local_split_x = mirror_x - cmin
+            local_split_y = mirror_y - rmin
+            
+            if side in ("up", "down"):
+                if side == "up":
+                    half_h = local_split_y
+                    symmetrical = Image.new("RGBA", (width, half_h * 2))
+                    top_half = cropped_target.crop((0, 0, width, half_h))
+                    symmetrical.paste(top_half, (0, 0))
+                    symmetrical.paste(ImageOps.flip(top_half), (0, half_h))
                 else:
-                    use_left = True  # Fallback
-
-                if use_left:
+                    half_h = height - local_split_y
+                    symmetrical = Image.new("RGBA", (width, half_h * 2))
+                    bottom_half = cropped_target.crop((0, local_split_y, width, height))
+                    symmetrical.paste(ImageOps.flip(bottom_half), (0, 0))
+                    symmetrical.paste(bottom_half, (0, half_h))
+                    
+                paste_x = cmin
+                paste_y = mirror_y - (symmetrical.height // 2)
+            else: # left, right
+                if side == "left":
                     half_w = local_split_x
                     symmetrical = Image.new("RGBA", (half_w * 2, height))
                     left_half = cropped_target.crop((0, 0, half_w, height))
@@ -178,55 +183,55 @@ def compose_naama_image(
                     right_half = cropped_target.crop((local_split_x, 0, width, height))
                     symmetrical.paste(ImageOps.mirror(right_half), (0, 0))
                     symmetrical.paste(right_half, (half_w, 0))
-                
+                    
                 paste_x = mirror_x - (symmetrical.width // 2)
                 paste_y = rmin
+
+            if action == "sticker":
                 output_image.alpha_composite(symmetrical, (paste_x, paste_y))
                 all_target_bounds.append((paste_x, paste_y, paste_x + symmetrical.width, paste_y + symmetrical.height))
-            else:
-                output_image.alpha_composite(cropped_target, (cmin, rmin))
-                all_target_bounds.append((cmin, rmin, cmax + 1, rmax + 1))
+                continue
+
+        elif action == "sticker":
+            output_image.alpha_composite(cropped_target, (cmin, rmin))
+            all_target_bounds.append((cmin, rmin, cmax + 1, rmax + 1))
             continue
 
-        # If we reach here, it's mirror action
-        mirror_x = cmin + (cmax - cmin) // 2
-        if cls_id == 0 and pose_results and pose_results[0].keypoints is not None:
-            kpts = pose_results[0].keypoints.data.cpu().numpy()
-            if len(kpts) > idx:
-                person_kpts = kpts[idx]
-                if len(person_kpts) > 0:
-                    nose_pt = person_kpts[0]
-                    confidence = float(nose_pt[2]) if len(nose_pt) > 2 else 1.0
-                    if confidence >= _KEYPOINT_MIN_CONFIDENCE:
-                        mirror_x = int(round(float(nose_pt[0])))
+        if action == "mirror" and side == "auto":
+            mirror_x = cmin + (cmax - cmin) // 2
+            if cls_id == 0 and pose_results and pose_results[0].keypoints is not None:
+                kpts = pose_results[0].keypoints.data.cpu().numpy()
+                if len(kpts) > idx:
+                    person_kpts = kpts[idx]
+                    if len(person_kpts) > 0:
+                        nose_pt = person_kpts[0]
+                        confidence = float(nose_pt[2]) if len(nose_pt) > 2 else 1.0
+                        if confidence >= _KEYPOINT_MIN_CONFIDENCE:
+                            mirror_x = int(round(float(nose_pt[0])))
 
-        mirror_x = max(cmin + 1, min(mirror_x, cmax - 1))
-        local_split_x = mirror_x - cmin
+            mirror_x = max(cmin + 1, min(mirror_x, cmax - 1))
+            local_split_x = mirror_x - cmin
 
-        target_alpha = np.array(cropped_target)[..., 3]
-        if side == "auto":
+            target_alpha = np.array(cropped_target)[..., 3]
             left_area = np.sum(target_alpha[:, :local_split_x] > 0)
             right_area = np.sum(target_alpha[:, local_split_x:] > 0)
             use_left = left_area >= right_area
-        elif side == "left":
-            use_left = True
-        elif side == "right":
-            use_left = False
-        else:
-            use_left = True
 
-        if use_left:
-            half_w = local_split_x
-            symmetrical = Image.new("RGBA", (half_w * 2, height))
-            left_half = cropped_target.crop((0, 0, half_w, height))
-            symmetrical.paste(left_half, (0, 0))
-            symmetrical.paste(ImageOps.mirror(left_half), (half_w, 0))
-        else:
-            half_w = width - local_split_x
-            symmetrical = Image.new("RGBA", (half_w * 2, height))
-            right_half = cropped_target.crop((local_split_x, 0, width, height))
-            symmetrical.paste(ImageOps.mirror(right_half), (0, 0))
-            symmetrical.paste(right_half, (half_w, 0))
+            if use_left:
+                half_w = local_split_x
+                symmetrical = Image.new("RGBA", (half_w * 2, height))
+                left_half = cropped_target.crop((0, 0, half_w, height))
+                symmetrical.paste(left_half, (0, 0))
+                symmetrical.paste(ImageOps.mirror(left_half), (half_w, 0))
+            else:
+                half_w = width - local_split_x
+                symmetrical = Image.new("RGBA", (half_w * 2, height))
+                right_half = cropped_target.crop((local_split_x, 0, width, height))
+                symmetrical.paste(ImageOps.mirror(right_half), (0, 0))
+                symmetrical.paste(right_half, (half_w, 0))
+
+            paste_x = mirror_x - (symmetrical.width // 2)
+            paste_y = rmin
 
         scale_factor = 1.15
         scaled_w = max(1, int(symmetrical.width * scale_factor))
@@ -235,7 +240,13 @@ def compose_naama_image(
 
         orig_center_y = rmin + (rmax - rmin) // 2
         paste_y = orig_center_y - scaled_h // 2
-        paste_x = mirror_x - (scaled_w // 2)
+        paste_x = paste_x - (scaled_w - symmetrical.width) // 2
+        
+        # Recalculate paste_x using mirror_x directly
+        if side in ("up", "down"):
+            paste_x = cmin - (scaled_w - width) // 2
+        else:
+            paste_x = mirror_x - (scaled_w // 2)
 
         output_image.alpha_composite(symmetrical, (paste_x, paste_y))
 
