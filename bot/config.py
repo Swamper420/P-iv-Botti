@@ -368,6 +368,3 @@ class BotConfig:
             twitch=twitch_config,
             tts=tts_config,
         )
-
-
-
