@@ -37,6 +37,8 @@ class TaskRegistrationTests(unittest.TestCase):
         modules = _discover_task_modules()
         module_names = {module.__name__.split(".")[-1] for module in modules}
         self.assertIn("cs2_rss", module_names)
+        self.assertIn("twitch", module_names)
+
 
     def test_register_tasks_attaches_post_init_and_post_shutdown_callbacks(self) -> None:
         app = _DummyAppWithHooks()

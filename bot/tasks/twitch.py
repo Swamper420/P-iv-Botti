@@ -68,7 +68,30 @@ class TwitchTask:
         else:
             LOGGER.info("Twitch is not configured (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, TWITCH_CHANNELS). Task disabled.")
 
+    async def stop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
 
 def register(application: Application, config: BotConfig) -> None:
     task = TwitchTask(application, config)
-    task.start()
+
+    prev_init = application.post_init
+    prev_shutdown = application.post_shutdown
+
+    async def post_init(app: Application) -> None:
+        if prev_init is not None:
+            await prev_init(app)
+        task.start()
+
+    async def post_shutdown(app: Application) -> None:
+        if prev_shutdown is not None:
+            await prev_shutdown(app)
+        await task.stop()
+
+    application.post_init = post_init
+    application.post_shutdown = post_shutdown
