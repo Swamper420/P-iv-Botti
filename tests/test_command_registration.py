@@ -20,9 +20,6 @@ class CommandRegistrationTests(unittest.TestCase):
         return BotConfig(
             telegram_bot_token="token",
             storage_dir=Path("."),
-            ai_backend_url="http://example.invalid/query",
-            ai_max_tokens=650,
-            ai_backend_timeout_seconds=30,
             openweather_api_key="",
             weathercam_stations_url="https://tie.digitraffic.fi/api/weathercam/v1/stations",
             weathercam_image_base_url="https://weathercam.digitraffic.fi",
@@ -33,17 +30,6 @@ class CommandRegistrationTests(unittest.TestCase):
             steam_cs2_rss_url="https://steamcommunity.com/games/csgo/rss/",
             steam_rss_poll_interval_seconds=300,
             steam_rss_request_timeout_seconds=30,
-            stt_backend_url="http://127.0.0.1:8081/transcribe",
-            stt_timeout_seconds=30,
-            stt_max_audio_seconds=600,
-            mumble_host="127.0.0.1",
-            mumble_port=64738,
-            mumble_username="status-bot",
-            mumble_password="secret",
-            mumble_connect_timeout_seconds=10,
-            mumble_status_wait_seconds=1,
-            mumble_monitor_interval_seconds=10,
-            mumble_startup_delay_seconds=0,
         )
 
     def test_registers_all_command_modules_with_message_filters(self) -> None:
@@ -55,7 +41,7 @@ class CommandRegistrationTests(unittest.TestCase):
         register_commands(app, self._config())
 
         self.assertTrue(
-            {"aih", "deepfry", "help", "mumble", "naama", "paivaa", "stt", "weather"}.issubset(
+            {"help", "hoi", "naama", "weather"}.issubset(
                 discovered_names
             )
         )

@@ -12,20 +12,9 @@ Async and modular Telegram bot skeleton.
 
 ## Current behavior
 
-The bot replies to message text `Päivää` with an AI-generated, deliberately over-the-top cringe uwu greeting.
-The latest four generated `Päivää` replies are persisted under `storage/` and used to avoid repeating recent
-responses.
-
-The bot also handles `aih: <prompt>` messages by sending the prompt to a local AI backend and replies
-with the response. `AI_BACKEND_URL`, `AI_MAX_TOKENS`, `AI_BACKEND_TIMEOUT_SECONDS`, and
-`MAX_REPLY_LENGTH` are configured through `.env` (`example.env` has defaults).
-
 The bot polls Steam's CS2 RSS feed in the background and forwards new updates to chats where the bot
 has been active. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and
 `STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
-
-The bot supports `mumble` / `!mumble` for local Mumble server status checks on all server channels.
-Set `MUMBLE_HOST`, `MUMBLE_PORT`, `MUMBLE_USERNAME`, and `MUMBLE_PASSWORD` in `.env`.
 
 The bot supports `!naama` on a photo caption or as a reply to a photo. It segments the person from the
 source image, applies a random `background*` image, and overlays random `hat*`, `suit*`, `gloves*`,

@@ -26,9 +26,6 @@ def _load_env_file(env_path: Path) -> None:
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
-    ai_backend_url: str
-    ai_max_tokens: int
-    ai_backend_timeout_seconds: int
     openweather_api_key: str
     weathercam_stations_url: str
     weathercam_image_base_url: str
@@ -39,29 +36,10 @@ class BotConfig:
     steam_cs2_rss_url: str
     steam_rss_poll_interval_seconds: int
     steam_rss_request_timeout_seconds: int
-    stt_backend_url: str
-    stt_timeout_seconds: int
-    stt_max_audio_seconds: int
-    mumble_host: str
-    mumble_port: int
-    mumble_username: str
-    mumble_password: str
-    mumble_connect_timeout_seconds: int
-    mumble_status_wait_seconds: int
-    mumble_monitor_interval_seconds: int
-    mumble_startup_delay_seconds: int
-    mumble_connect_retries: int = 2
-    mumble_tele_chat_id: int | None = None
-    deepfry_model_name: str = "yolo26n-seg.pt"
-    deepfry_overlay_alpha: float = 0.45
-    deepfry_confidence_threshold: float = 0.15
-    deepfry_mask_threshold: float = 0.35
-    deepfry_max_image_bytes: int = 10_000_000
     naama_model_name: str = "yolo26n-seg.pt"
     naama_confidence_threshold: float = 0.15
     naama_mask_threshold: float = 0.35
     naama_max_image_bytes: int = 10_000_000
-    analysoi_max_image_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -76,33 +54,6 @@ class BotConfig:
             os.getenv("STORAGE_DIR", str(project_root / "storage"))
         ).resolve()
         storage_dir.mkdir(parents=True, exist_ok=True)
-        mumble_monitor_interval_seconds = int(
-            os.getenv("MUMBLE_MONITOR_INTERVAL_SECONDS", "10")
-        )
-        if mumble_monitor_interval_seconds < 1:
-            raise ValueError("MUMBLE_MONITOR_INTERVAL_SECONDS must be >= 1")
-        mumble_startup_delay_seconds = int(
-            os.getenv("MUMBLE_STARTUP_DELAY_SECONDS", "2")
-        )
-        if mumble_startup_delay_seconds < 0:
-            raise ValueError("MUMBLE_STARTUP_DELAY_SECONDS must be >= 0")
-        mumble_connect_retries = int(os.getenv("MUMBLE_CONNECT_RETRIES", "2"))
-        if mumble_connect_retries < 1:
-            raise ValueError("MUMBLE_CONNECT_RETRIES must be >= 1")
-        deepfry_overlay_alpha = float(os.getenv("DEEPFRY_OVERLAY_ALPHA", "0.45"))
-        if not 0 <= deepfry_overlay_alpha <= 1:
-            raise ValueError("DEEPFRY_OVERLAY_ALPHA must be between 0 and 1")
-        deepfry_confidence_threshold = float(
-            os.getenv("DEEPFRY_CONFIDENCE_THRESHOLD", "0.15")
-        )
-        if not 0 <= deepfry_confidence_threshold <= 1:
-            raise ValueError("DEEPFRY_CONFIDENCE_THRESHOLD must be between 0 and 1")
-        deepfry_mask_threshold = float(os.getenv("DEEPFRY_MASK_THRESHOLD", "0.35"))
-        if not 0 <= deepfry_mask_threshold <= 1:
-            raise ValueError("DEEPFRY_MASK_THRESHOLD must be between 0 and 1")
-        deepfry_max_image_bytes = int(os.getenv("DEEPFRY_MAX_IMAGE_BYTES", "10000000"))
-        if deepfry_max_image_bytes < 1:
-            raise ValueError("DEEPFRY_MAX_IMAGE_BYTES must be >= 1")
         naama_confidence_threshold = float(
             os.getenv("NAAMA_CONFIDENCE_THRESHOLD", "0.15")
         )
@@ -118,21 +69,10 @@ class BotConfig:
         )
         if naama_max_image_bytes < 1:
             raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
-        analysoi_max_image_bytes = int(
-            os.getenv("ANALYSOI_MAX_IMAGE_BYTES", "10000000")
-        )
-        if analysoi_max_image_bytes < 1:
-            raise ValueError("ANALYSOI_MAX_IMAGE_BYTES must be >= 1")
-
-        mumble_tele_chat_id_raw = os.getenv("MUMBLE_TELE_CHAT_ID", "").strip()
-        mumble_tele_chat_id = int(mumble_tele_chat_id_raw) if mumble_tele_chat_id_raw else None
 
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
-            ai_backend_url=os.getenv("AI_BACKEND_URL", "http://127.0.0.1:8080/query").strip(),
-            ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "650")),
-            ai_backend_timeout_seconds=int(os.getenv("AI_BACKEND_TIMEOUT_SECONDS", "30")),
             openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
             weathercam_stations_url=os.getenv(
                 "WEATHERCAM_STATIONS_URL",
@@ -159,31 +99,8 @@ class BotConfig:
             steam_rss_request_timeout_seconds=int(
                 os.getenv("STEAM_RSS_REQUEST_TIMEOUT_SECONDS", "30")
             ),
-            stt_backend_url=os.getenv(
-                "STT_BACKEND_URL", "http://127.0.0.1:8081/transcribe"
-            ).strip(),
-            stt_timeout_seconds=int(os.getenv("STT_TIMEOUT_SECONDS", "30")),
-            stt_max_audio_seconds=int(os.getenv("STT_MAX_AUDIO_SECONDS", "600")),
-            mumble_host=os.getenv("MUMBLE_HOST", "127.0.0.1").strip(),
-            mumble_port=int(os.getenv("MUMBLE_PORT", "64738")),
-            mumble_username=os.getenv("MUMBLE_USERNAME", "telegram-status-bot").strip(),
-            mumble_password=os.getenv("MUMBLE_PASSWORD", "").strip(),
-            mumble_connect_timeout_seconds=int(
-                os.getenv("MUMBLE_CONNECT_TIMEOUT_SECONDS", "10")
-            ),
-            mumble_connect_retries=mumble_connect_retries,
-            mumble_status_wait_seconds=int(os.getenv("MUMBLE_STATUS_WAIT_SECONDS", "1")),
-            mumble_monitor_interval_seconds=mumble_monitor_interval_seconds,
-            mumble_startup_delay_seconds=mumble_startup_delay_seconds,
-            mumble_tele_chat_id=mumble_tele_chat_id,
-            deepfry_model_name=os.getenv("DEEPFRY_MODEL_NAME", "yolo26n-seg.pt").strip(),
-            deepfry_overlay_alpha=deepfry_overlay_alpha,
-            deepfry_confidence_threshold=deepfry_confidence_threshold,
-            deepfry_mask_threshold=deepfry_mask_threshold,
-            deepfry_max_image_bytes=deepfry_max_image_bytes,
             naama_model_name=os.getenv("NAAMA_MODEL_NAME", "yolo26n-seg.pt").strip(),
             naama_confidence_threshold=naama_confidence_threshold,
             naama_mask_threshold=naama_mask_threshold,
             naama_max_image_bytes=naama_max_image_bytes,
-            analysoi_max_image_bytes=analysoi_max_image_bytes,
         )
