@@ -46,7 +46,7 @@ class CommandRegistrationTests(unittest.TestCase):
         register_commands(app, self._config())
 
         self.assertTrue(
-            {"help", "hoi", "naama", "weather"}.issubset(
+            {"aih", "help", "hoi", "naama", "weather"}.issubset(
                 discovered_names
             )
         )

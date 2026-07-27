@@ -48,6 +48,15 @@ class NaamaConfig:
 
 
 @dataclass(frozen=True)
+class OllamaConfig:
+    base_url: str = "http://localhost:11434"
+    model: str = "llama3.2"
+    default_num_predict: int = 100
+    max_num_predict: int = 2000
+    timeout_seconds: int = 120
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -55,6 +64,8 @@ class BotConfig:
     weather: WeatherConfig
     cs2_rss: Cs2RssConfig
     naama: NaamaConfig
+    ollama: OllamaConfig = OllamaConfig()
+
 
     # Backward compatibility properties
     @property
@@ -109,6 +120,26 @@ class BotConfig:
     def naama_max_image_bytes(self) -> int:
         return self.naama.max_image_bytes
 
+    @property
+    def ollama_base_url(self) -> str:
+        return self.ollama.base_url
+
+    @property
+    def ollama_model(self) -> str:
+        return self.ollama.model
+
+    @property
+    def ollama_default_num_predict(self) -> int:
+        return self.ollama.default_num_predict
+
+    @property
+    def ollama_max_num_predict(self) -> int:
+        return self.ollama.max_num_predict
+
+    @property
+    def ollama_timeout_seconds(self) -> int:
+        return self.ollama.timeout_seconds
+
     @classmethod
     def from_environment(cls) -> "BotConfig":
         project_root = Path(__file__).resolve().parent.parent
@@ -138,6 +169,22 @@ class BotConfig:
         )
         if naama_max_image_bytes < 1:
             raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
+
+        ollama_default_num_predict = int(
+            os.getenv("OLLAMA_DEFAULT_NUM_PREDICT", "100")
+        )
+        if ollama_default_num_predict < 1:
+            raise ValueError("OLLAMA_DEFAULT_NUM_PREDICT must be >= 1")
+        ollama_max_num_predict = int(
+            os.getenv("OLLAMA_MAX_NUM_PREDICT", "2000")
+        )
+        if ollama_max_num_predict < 1:
+            raise ValueError("OLLAMA_MAX_NUM_PREDICT must be >= 1")
+        ollama_timeout_seconds = int(
+            os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")
+        )
+        if ollama_timeout_seconds < 1:
+            raise ValueError("OLLAMA_TIMEOUT_SECONDS must be >= 1")
 
         weather_config = WeatherConfig(
             openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
@@ -177,6 +224,14 @@ class BotConfig:
             max_image_bytes=naama_max_image_bytes,
         )
 
+        ollama_config = OllamaConfig(
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip(),
+            model=os.getenv("OLLAMA_MODEL", "llama3.2").strip(),
+            default_num_predict=ollama_default_num_predict,
+            max_num_predict=ollama_max_num_predict,
+            timeout_seconds=ollama_timeout_seconds,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -184,4 +239,6 @@ class BotConfig:
             weather=weather_config,
             cs2_rss=cs2_rss_config,
             naama=naama_config,
+            ollama=ollama_config,
         )
+

@@ -21,6 +21,11 @@ class ConfigTests(unittest.TestCase):
                 "NAAMA_CONFIDENCE_THRESHOLD": "0.25",
                 "NAAMA_MASK_THRESHOLD": "0.45",
                 "NAAMA_MAX_IMAGE_BYTES": "7654321",
+                "OLLAMA_BASE_URL": "http://ollama.example:11434",
+                "OLLAMA_MODEL": "qwen2.5",
+                "OLLAMA_DEFAULT_NUM_PREDICT": "150",
+                "OLLAMA_MAX_NUM_PREDICT": "1500",
+                "OLLAMA_TIMEOUT_SECONDS": "60",
             },
             clear=False,
         ):
@@ -36,6 +41,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.naama.confidence_threshold, 0.25)
         self.assertEqual(config.naama.mask_threshold, 0.45)
         self.assertEqual(config.naama.max_image_bytes, 7654321)
+        self.assertEqual(config.ollama.base_url, "http://ollama.example:11434")
+        self.assertEqual(config.ollama.model, "qwen2.5")
+        self.assertEqual(config.ollama.default_num_predict, 150)
+        self.assertEqual(config.ollama.max_num_predict, 1500)
+        self.assertEqual(config.ollama.timeout_seconds, 60)
 
         # Backward compatibility property checks
         self.assertEqual(config.openweather_api_key, "ow-key")
@@ -48,7 +58,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.naama_confidence_threshold, 0.25)
         self.assertEqual(config.naama_mask_threshold, 0.45)
         self.assertEqual(config.naama_max_image_bytes, 7654321)
+        self.assertEqual(config.ollama_base_url, "http://ollama.example:11434")
+        self.assertEqual(config.ollama_model, "qwen2.5")
+        self.assertEqual(config.ollama_default_num_predict, 150)
+        self.assertEqual(config.ollama_max_num_predict, 1500)
+        self.assertEqual(config.ollama_timeout_seconds, 60)
 
 
 if __name__ == "__main__":
     unittest.main()
+
