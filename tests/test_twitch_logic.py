@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from bot.commands.twitch_logic import fetch_twitch_status_reply, parse_twitch_command
 from bot.config import BotConfig, TwitchConfig
@@ -173,13 +173,45 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
 
         notifier = TwitchEventSubNotifier(config=cfg, on_stream_online=callback, client=mock_client)
 
-        with patch.object(notifier, "_run_polling_loop") as mock_poll:
-            mock_poll.return_value = None
-            await notifier.start()
-            mock_poll.assert_called_once()
-            self.assertTrue(notifier._use_polling_fallback)
+    async def test_notifier_calls_on_token_expired_when_user_token_fails(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="invalid_tok", channels=("shroud",))
+        mock_client = MagicMock(spec=TwitchClient)
+        mock_client.subscribe_eventsub_websocket.return_value = False
+
+        token_errors: list[str] = []
+
+        async def callback(_: TwitchStreamNotification) -> None:
+            pass
+
+        async def on_token_expired(reason: str) -> None:
+            token_errors.append(reason)
+
+        notifier = TwitchEventSubNotifier(
+            config=cfg,
+            on_stream_online=callback,
+            client=mock_client,
+            on_token_expired=on_token_expired,
+        )
+        notifier._user_map = {"1001": "shroud"}
+
+        mock_ws = AsyncMock()
+        mock_ws.__aiter__.return_value = [
+            json.dumps({
+                "metadata": {"message_type": "session_welcome"},
+                "payload": {"session": {"id": "sess123"}},
+            })
+        ]
+
+        with patch("websockets.connect") as mock_connect:
+            mock_connect.return_value.__aenter__.return_value = mock_ws
+            await notifier._run_websocket_session("wss://example.com")
+
+        self.assertTrue(notifier._use_polling_fallback)
+        self.assertEqual(len(token_errors), 1)
+        self.assertIn("TWITCH_USER_ACCESS_TOKEN", token_errors[0])
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

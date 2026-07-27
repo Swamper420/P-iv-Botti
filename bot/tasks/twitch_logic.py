@@ -179,6 +179,7 @@ class TwitchClient:
 
 
 OnStreamOnlineCallback = Callable[[TwitchStreamNotification], Coroutine[Any, Any, None]]
+OnTokenExpiredCallback = Callable[[str], Coroutine[Any, Any, None]]
 
 
 class TwitchEventSubNotifier:
@@ -187,14 +188,17 @@ class TwitchEventSubNotifier:
         config: TwitchConfig,
         on_stream_online: OnStreamOnlineCallback,
         client: TwitchClient | None = None,
+        on_token_expired: OnTokenExpiredCallback | None = None,
     ) -> None:
         self.config = config
         self.on_stream_online = on_stream_online
+        self.on_token_expired = on_token_expired
         self.client = client or TwitchClient(config)
         self._user_map: dict[str, str] = {}  # {user_id: login}
         self._live_user_ids: set[str] = set()
         self._use_polling_fallback = False
         self._running = False
+        self._token_expired_notified = False
 
     async def start(self) -> None:
         if not self.config.is_configured:
@@ -272,6 +276,14 @@ class TwitchEventSubNotifier:
                             self.config.poll_interval_seconds,
                         )
                         self._use_polling_fallback = True
+                        if self.config.user_access_token and self.on_token_expired and not self._token_expired_notified:
+                            self._token_expired_notified = True
+                            try:
+                                await self.on_token_expired(
+                                    "Twitch WebSocket subscription failed. Your TWITCH_USER_ACCESS_TOKEN may be expired or invalid."
+                                )
+                            except Exception as err:
+                                LOGGER.error("Failed executing on_token_expired callback: %s", err, exc_info=True)
                         break
 
                 elif message_type == "session_reconnect":

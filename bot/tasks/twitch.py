@@ -21,8 +21,32 @@ class TwitchTask:
         self.notifier = TwitchEventSubNotifier(
             config=config.twitch,
             on_stream_online=self._handle_stream_online,
+            on_token_expired=self._handle_token_expired,
         )
         self._task: asyncio.Task[None] | None = None
+
+    async def _handle_token_expired(self, reason: str) -> None:
+        active_chat_ids = load_active_chat_ids(self.config.storage_dir)
+        if not active_chat_ids:
+            LOGGER.info("No active chat IDs stored. Skipping Twitch token expired warning.")
+            return
+
+        message = (
+            "⚠️ <b>Twitch Integration Warning</b>\n\n"
+            f"{reason}\n\n"
+            "Bot has automatically switched to periodic API polling (60s). "
+            "To restore real-time notifications, please generate and set a new <code>TWITCH_USER_ACCESS_TOKEN</code>."
+        )
+
+        for chat_id in active_chat_ids:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
+            except Exception as err:
+                LOGGER.error("Failed to send Twitch token error notification to chat %s: %s", chat_id, err)
 
     async def _handle_stream_online(self, notification: TwitchStreamNotification) -> None:
         active_chat_ids = load_active_chat_ids(self.config.storage_dir)
