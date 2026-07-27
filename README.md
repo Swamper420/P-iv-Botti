@@ -12,13 +12,11 @@ Async and modular Telegram bot skeleton.
 
 ## Current behavior
 
-The bot polls Steam's CS2 RSS feed in the background and forwards new updates to chats where the bot
-has been active. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and
-`STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
-
-The bot supports `!naama` on a photo caption or as a reply to a photo. It segments the person from the
-source image, applies a random `background*` image, and overlays random `hat*`, `suit*`, `gloves*`,
-`cigar*`, and `sun*` PNG/JPG assets from `storage/naama/`.
+- **`!help`**: Auto-discovers and lists available bot commands.
+- **`!hoi` / `!hoijaa`**: Manages and pings mention lists for chat groups (`!hoi <lista>`, `!hoi @käyttäjä <lista>`, `!hoijaa @käyttäjä <lista>`).
+- **`!naama` / `!naamatarra`**: Segments the person from a photo (or replied photo), applies a random background image, and overlays random accessories from `storage/naama/`.
+- **`!sääkuva <kaupunki>`**: Fetches current weather information from OpenWeather and weather camera images from Digitraffic for the requested location.
+- **CS2 RSS Notifier**: Background task polling Steam's CS2 RSS feed and forwarding new updates to active bot chats. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and `STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
 
 ## Setup
 
@@ -31,7 +29,7 @@ source image, applies a random `background*` image, and overlays random `hat*`, 
    ```bash
    cp example.env .env
    ```
-4. Set `TELEGRAM_BOT_TOKEN` in `.env` (and optionally adjust AI backend settings).
+4. Set `TELEGRAM_BOT_TOKEN` in `.env` (and optionally `OPENWEATHER_API_KEY` for weather reports).
 5. Run:
    ```bash
    python -m bot.main
