@@ -26,6 +26,7 @@ class ConfigTests(unittest.TestCase):
                 "OLLAMA_DEFAULT_NUM_PREDICT": "150",
                 "OLLAMA_MAX_NUM_PREDICT": "1500",
                 "OLLAMA_TIMEOUT_SECONDS": "60",
+                "OLLAMA_STRIP_THINKING": "true",
             },
             clear=False,
         ):
@@ -46,6 +47,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama.default_num_predict, 150)
         self.assertEqual(config.ollama.max_num_predict, 1500)
         self.assertEqual(config.ollama.timeout_seconds, 60)
+        self.assertTrue(config.ollama.strip_thinking)
 
         # Backward compatibility property checks
         self.assertEqual(config.openweather_api_key, "ow-key")
@@ -63,6 +65,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_default_num_predict, 150)
         self.assertEqual(config.ollama_max_num_predict, 1500)
         self.assertEqual(config.ollama_timeout_seconds, 60)
+        self.assertTrue(config.ollama_strip_thinking)
+
 
 
 if __name__ == "__main__":

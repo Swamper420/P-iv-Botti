@@ -54,6 +54,8 @@ class OllamaConfig:
     default_num_predict: int = 100
     max_num_predict: int = 2000
     timeout_seconds: int = 120
+    strip_thinking: bool = True
+
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,10 @@ class BotConfig:
     def ollama_timeout_seconds(self) -> int:
         return self.ollama.timeout_seconds
 
+    @property
+    def ollama_strip_thinking(self) -> bool:
+        return self.ollama.strip_thinking
+
     @classmethod
     def from_environment(cls) -> "BotConfig":
         project_root = Path(__file__).resolve().parent.parent
@@ -185,6 +191,9 @@ class BotConfig:
         )
         if ollama_timeout_seconds < 1:
             raise ValueError("OLLAMA_TIMEOUT_SECONDS must be >= 1")
+        ollama_strip_thinking = (
+            os.getenv("OLLAMA_STRIP_THINKING", "true").strip().lower() == "true"
+        )
 
         weather_config = WeatherConfig(
             openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
@@ -230,7 +239,9 @@ class BotConfig:
             default_num_predict=ollama_default_num_predict,
             max_num_predict=ollama_max_num_predict,
             timeout_seconds=ollama_timeout_seconds,
+            strip_thinking=ollama_strip_thinking,
         )
+
 
         return cls(
             telegram_bot_token=token,

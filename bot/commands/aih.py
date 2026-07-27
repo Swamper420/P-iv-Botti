@@ -26,10 +26,11 @@ def _build_handler(
         if not message or not message.text:
             return
 
-        is_match, num_predict, prompt = parse_aih_command(
+        is_match, num_predict, strip_thinking, prompt = parse_aih_command(
             message.text,
             default_tokens=config.ollama.default_num_predict,
             max_tokens=config.ollama.max_num_predict,
+            default_strip_thinking=config.ollama.strip_thinking,
         )
 
         if not is_match:
@@ -53,7 +54,9 @@ def _build_handler(
                 prompt=prompt,
                 num_predict=num_predict,
                 timeout_seconds=config.ollama.timeout_seconds,
+                strip_thinking=strip_thinking,
             ):
+
                 accumulated_text += chunk
                 now = asyncio.get_running_loop().time()
 
