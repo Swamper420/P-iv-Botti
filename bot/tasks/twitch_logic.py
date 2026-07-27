@@ -119,7 +119,14 @@ class TwitchClient:
             return None
 
     def subscribe_eventsub_websocket(self, session_id: str, broadcaster_user_id: str) -> bool:
-        token = self.config.user_access_token or self.get_app_token()
+        if not self.config.user_access_token:
+            LOGGER.warning(
+                "Cannot subscribe EventSub via WebSocket: TWITCH_USER_ACCESS_TOKEN is not configured "
+                "(Twitch requires a User Access Token for WebSocket subscriptions)."
+            )
+            return False
+
+        token = self.config.user_access_token
         url = f"{self.config.helix_base_url}/eventsub/subscriptions"
         payload = {
             "type": "stream.online",
@@ -151,16 +158,24 @@ class TwitchClient:
                 body_text = err.read().decode("utf-8", errors="ignore")
             except Exception:
                 body_text = ""
-            LOGGER.error(
-                "Failed to subscribe EventSub for broadcaster %s: %s - Body: %s",
-                broadcaster_user_id,
-                err,
-                body_text,
-            )
+            if "invalid transport and auth combination" in body_text:
+                LOGGER.warning(
+                    "Twitch rejected WebSocket EventSub subscription for broadcaster %s "
+                    "(invalid transport and auth combination: User Access Token required). Fallback to polling.",
+                    broadcaster_user_id,
+                )
+            else:
+                LOGGER.error(
+                    "Failed to subscribe EventSub for broadcaster %s: %s - Body: %s",
+                    broadcaster_user_id,
+                    err,
+                    body_text,
+                )
             return False
         except Exception as err:
             LOGGER.error("Failed to subscribe EventSub for broadcaster %s: %s", broadcaster_user_id, err)
             return False
+
 
 
 OnStreamOnlineCallback = Callable[[TwitchStreamNotification], Coroutine[Any, Any, None]]
@@ -188,6 +203,14 @@ class TwitchEventSubNotifier:
 
         self._running = True
         ws_url = self.config.websocket_url
+
+        if not self.config.user_access_token:
+            LOGGER.info(
+                "TWITCH_USER_ACCESS_TOKEN is not configured. Twitch EventSub WebSockets require a User Access Token. "
+                "Using periodic API polling (interval: %ds)...",
+                self.config.poll_interval_seconds,
+            )
+            self._use_polling_fallback = True
 
         while self._running:
             if self._use_polling_fallback:

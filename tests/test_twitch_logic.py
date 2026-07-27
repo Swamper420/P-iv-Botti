@@ -140,6 +140,46 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tarik", reply)
         self.assertIn("Offline", reply)
 
+    def test_subscribe_eventsub_websocket_without_user_token(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="", channels=("shroud",))
+        client = TwitchClient(cfg)
+        ok = client.subscribe_eventsub_websocket("session123", "1001")
+        self.assertFalse(ok)
+
+    @patch("urllib.request.urlopen")
+    def test_subscribe_eventsub_websocket_invalid_auth_400(self, mock_urlopen: MagicMock) -> None:
+        import io
+        import urllib.error
+        err_resp = urllib.error.HTTPError(
+            url="http://example.com",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=io.BytesIO(b'{"error":"Bad Request","status":400,"message":"invalid transport and auth combination"}'),
+        )
+        mock_urlopen.side_effect = err_resp
+
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="user_tok", channels=("shroud",))
+        client = TwitchClient(cfg)
+        ok = client.subscribe_eventsub_websocket("session123", "1001")
+        self.assertFalse(ok)
+
+    async def test_notifier_defaults_to_polling_without_user_token(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="", channels=("shroud",))
+        mock_client = MagicMock(spec=TwitchClient)
+
+        async def callback(_: TwitchStreamNotification) -> None:
+            pass
+
+        notifier = TwitchEventSubNotifier(config=cfg, on_stream_online=callback, client=mock_client)
+
+        with patch.object(notifier, "_run_polling_loop") as mock_poll:
+            mock_poll.return_value = None
+            await notifier.start()
+            mock_poll.assert_called_once()
+            self.assertTrue(notifier._use_polling_fallback)
+
 
 if __name__ == "__main__":
     unittest.main()
+
