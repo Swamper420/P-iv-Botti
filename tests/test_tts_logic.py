@@ -67,6 +67,65 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
             json={"text": "Terve", "format": "ogg", "voice": "Matti"},
         )
 
+    async def test_handle_tts_error_response_on_exception(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from bot.commands.tts import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(error_message="Testivirhe viesti"),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        update.effective_message.text = "puhuu: Testi"
+        update.effective_chat.id = 1234
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+             patch("bot.commands.tts.synthesize_speech", side_effect=RuntimeError("TTS failed")), \
+             patch("bot.commands.tts.reply_in_chunks") as mock_reply:
+            await handler(update, context)
+            mock_reply.assert_called_once_with(update, "Testivirhe viesti", 5000)
+
+    async def test_handle_tts_error_response_on_empty_audio(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from bot.commands.tts import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(error_message="Testivirhe viesti"),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        update.effective_message.text = "puhuu: Testi"
+        update.effective_chat.id = 1234
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+             patch("bot.commands.tts.synthesize_speech", return_value=b""), \
+             patch("bot.commands.tts.reply_in_chunks") as mock_reply:
+            await handler(update, context)
+            mock_reply.assert_called_once_with(update, "Testivirhe viesti", 5000)
+
 
 if __name__ == "__main__":
     unittest.main()
+

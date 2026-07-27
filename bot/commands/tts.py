@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -11,6 +12,8 @@ from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.tts_logic import parse_tts_command, synthesize_speech
 from bot.config import BotConfig
+
+LOGGER = logging.getLogger(__name__)
 
 COMMAND_USAGE = "*ääni* puhuu: <teksti> | puhuu: <teksti>"
 
@@ -50,16 +53,18 @@ def _build_handler(
                 timeout_seconds=config.tts.timeout_seconds,
             )
             if not audio_bytes:
+                LOGGER.error("TTS synthesis returned empty audio bytes.")
                 await reply_in_chunks(
-                    update, "Virhe: TTS-rajapinta palautti tyhjän äänitiedoston.", config.max_reply_length
+                    update, config.tts.error_message, config.max_reply_length
                 )
                 return
 
             voice_file = InputFile(BytesIO(audio_bytes), filename="speech.ogg")
             await message.reply_voice(voice=voice_file)
-        except Exception as exc:
+        except Exception:
+            LOGGER.exception("Error during TTS speech synthesis")
             await reply_in_chunks(
-                update, f"Virhe puheen synteesissä: {exc}", config.max_reply_length
+                update, config.tts.error_message, config.max_reply_length
             )
 
     return handle_tts

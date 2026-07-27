@@ -85,6 +85,7 @@ class TtsConfig:
     base_url: str = "http://localhost:8080"
     timeout_seconds: int = 60
     format: str = "ogg"
+    error_message: str = "Virhe puheen synteesissä."
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,10 @@ class BotConfig:
     @property
     def tts_format(self) -> str:
         return self.tts.format
+
+    @property
+    def tts_error_message(self) -> str:
+        return self.tts.error_message
 
     @classmethod
 
@@ -340,10 +345,16 @@ class BotConfig:
         if tts_timeout_seconds < 1:
             raise ValueError("TTS_TIMEOUT_SECONDS must be >= 1")
 
+        tts_error_message = (
+            os.getenv("TTS_ERROR_MESSAGE", "Virhe puheen synteesissä.").strip()
+            or "Virhe puheen synteesissä."
+        )
+
         tts_config = TtsConfig(
             base_url=os.getenv("TTS_BASE_URL", "http://localhost:8080").strip(),
             timeout_seconds=tts_timeout_seconds,
             format=os.getenv("TTS_FORMAT", "ogg").strip(),
+            error_message=tts_error_message,
         )
 
         return cls(
