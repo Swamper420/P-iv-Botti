@@ -64,6 +64,21 @@ class OllamaConfig:
 
 
 @dataclass(frozen=True)
+class TwitchConfig:
+    client_id: str = ""
+    client_secret: str = ""
+    channels: tuple[str, ...] = ()
+    websocket_url: str = "wss://eventsub.wss.twitch.tv/ws"
+    token_url: str = "https://id.twitch.tv/oauth2/token"
+    helix_base_url: str = "https://api.twitch.tv/helix"
+    reconnect_delay_seconds: int = 5
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret and self.channels)
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -72,6 +87,8 @@ class BotConfig:
     cs2_rss: Cs2RssConfig
     naama: NaamaConfig
     ollama: OllamaConfig = OllamaConfig()
+    twitch: TwitchConfig = TwitchConfig()
+
 
 
     # Backward compatibility properties
@@ -154,6 +171,18 @@ class BotConfig:
     @property
     def ollama_system_prompt(self) -> str:
         return self.ollama.system_prompt
+
+    @property
+    def twitch_client_id(self) -> str:
+        return self.twitch.client_id
+
+    @property
+    def twitch_client_secret(self) -> str:
+        return self.twitch.client_secret
+
+    @property
+    def twitch_channels(self) -> tuple[str, ...]:
+        return self.twitch.channels
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -257,7 +286,27 @@ class BotConfig:
             system_prompt=ollama_system_prompt,
         )
 
-
+        raw_channels = os.getenv("TWITCH_CHANNELS", "").strip()
+        twitch_channels = tuple(
+            c.strip().lower() for c in raw_channels.split(",") if c.strip()
+        )
+        twitch_config = TwitchConfig(
+            client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
+            client_secret=os.getenv("TWITCH_CLIENT_SECRET", "").strip(),
+            channels=twitch_channels,
+            websocket_url=os.getenv(
+                "TWITCH_WEBSOCKET_URL", "wss://eventsub.wss.twitch.tv/ws"
+            ).strip(),
+            token_url=os.getenv(
+                "TWITCH_TOKEN_URL", "https://id.twitch.tv/oauth2/token"
+            ).strip(),
+            helix_base_url=os.getenv(
+                "TWITCH_HELIX_BASE_URL", "https://api.twitch.tv/helix"
+            ).strip(),
+            reconnect_delay_seconds=int(
+                os.getenv("TWITCH_RECONNECT_DELAY_SECONDS", "5")
+            ),
+        )
 
         return cls(
             telegram_bot_token=token,
@@ -267,5 +316,7 @@ class BotConfig:
             cs2_rss=cs2_rss_config,
             naama=naama_config,
             ollama=ollama_config,
+            twitch=twitch_config,
         )
+
 

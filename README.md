@@ -16,7 +16,10 @@ Async and modular Telegram bot skeleton.
 - **`!hoi` / `!hoijaa`**: Manages and pings mention lists for chat groups (`!hoi <lista>`, `!hoi @käyttäjä <lista>`, `!hoijaa @käyttäjä <lista>`).
 - **`!naama` / `!naamatarra`**: Segments the person from a photo (or replied photo), applies a random background image, and overlays random accessories from `storage/naama/`.
 - **`!sääkuva <kaupunki>`**: Fetches current weather information from OpenWeather and weather camera images from Digitraffic for the requested location.
+- **`!twitch`**: Shows current status and live links for configured Twitch channels.
 - **CS2 RSS Notifier**: Background task polling Steam's CS2 RSS feed and forwarding new updates to active bot chats. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and `STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
+- **Twitch EventSub Notifier**: Real-time WebSocket background task sending instant notifications with stream title, category, preview image, and direct link whenever tracked channels go live on Twitch. Configured via `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_CHANNELS` in `.env`.
+
 
 ## Setup
 

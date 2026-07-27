@@ -25,6 +25,7 @@ When extending this project:
   - `help.py` + `help_logic.py`
   - `hoi.py` + `hoi_logic.py`
   - `naama.py` + `naama_logic.py`
+  - `twitch.py` + `twitch_logic.py`
   - `weather.py` + `weather_logic.py`
 - Shared command utilities in `bot/commands/`:
   - `common.py`: `@command_handler` decorator for chat tracking and error handling
@@ -32,11 +33,13 @@ When extending this project:
 - Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
 - Background tasks are modularized in `bot/tasks/`:
   - `cs2_rss.py`: `Cs2RssNotifier` for background RSS polling
+  - `twitch.py`: `TwitchEventSubNotifier` for Twitch EventSub WebSockets live notifications
   - Auto-discovered and registered via `bot/tasks/__init__.py` (`register_tasks`)
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`).
+
 
 - Active chat persistence is handled in `bot/active_chats.py` under `storage/active_chat_ids.json`.
 - Targeted tests: `python -m unittest tests.test_weather_logic` (replace module with the area you changed).

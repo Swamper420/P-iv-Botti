@@ -2,3 +2,5 @@ python-telegram-bot
 numpy
 Pillow
 ultralytics
+websockets
+
