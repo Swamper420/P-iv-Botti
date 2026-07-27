@@ -55,6 +55,11 @@ class OllamaConfig:
     max_num_predict: int = 2000
     timeout_seconds: int = 120
     strip_thinking: bool = True
+    system_prompt: str = (
+        "Do not include internal thinking processes, reasoning steps, or <think> tags. "
+        "Answer directly and concisely."
+    )
+
 
 
 
@@ -146,6 +151,10 @@ class BotConfig:
     def ollama_strip_thinking(self) -> bool:
         return self.ollama.strip_thinking
 
+    @property
+    def ollama_system_prompt(self) -> str:
+        return self.ollama.system_prompt
+
     @classmethod
     def from_environment(cls) -> "BotConfig":
         project_root = Path(__file__).resolve().parent.parent
@@ -194,6 +203,11 @@ class BotConfig:
         ollama_strip_thinking = (
             os.getenv("OLLAMA_STRIP_THINKING", "true").strip().lower() == "true"
         )
+        default_system = (
+            "Do not include internal thinking processes, reasoning steps, or <think> tags. "
+            "Answer directly and concisely."
+        )
+        ollama_system_prompt = os.getenv("OLLAMA_SYSTEM_PROMPT", default_system).strip()
 
         weather_config = WeatherConfig(
             openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
@@ -240,7 +254,9 @@ class BotConfig:
             max_num_predict=ollama_max_num_predict,
             timeout_seconds=ollama_timeout_seconds,
             strip_thinking=ollama_strip_thinking,
+            system_prompt=ollama_system_prompt,
         )
+
 
 
         return cls(

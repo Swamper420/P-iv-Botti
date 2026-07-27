@@ -112,6 +112,7 @@ async def _raw_stream_ollama(
     num_predict: int,
     timeout_seconds: int,
     strip_thinking: bool,
+    system_prompt: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> AsyncGenerator[str, None]:
     target_url = f"{base_url.rstrip('/')}/api/generate"
@@ -124,11 +125,15 @@ async def _raw_stream_ollama(
         },
     }
 
-    if strip_thinking:
+    if system_prompt is not None and system_prompt.strip():
+        payload["system"] = system_prompt
+    elif strip_thinking:
         payload["system"] = (
             "Do not include internal thinking processes, reasoning steps, or <think> tags. "
             "Answer directly and concisely."
         )
+
+    if strip_thinking:
         payload["options"]["think"] = False
 
     close_client = False
@@ -163,6 +168,7 @@ async def stream_ollama_completion(
     num_predict: int,
     timeout_seconds: int = 120,
     strip_thinking: bool = True,
+    system_prompt: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream text completion chunks from an Ollama instance, stripping thinking blocks if configured."""
@@ -173,6 +179,7 @@ async def stream_ollama_completion(
         num_predict=num_predict,
         timeout_seconds=timeout_seconds,
         strip_thinking=strip_thinking,
+        system_prompt=system_prompt,
         client=client,
     )
 
@@ -182,3 +189,4 @@ async def stream_ollama_completion(
     else:
         async for chunk in raw_stream:
             yield chunk
+

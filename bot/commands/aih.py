@@ -55,7 +55,9 @@ def _build_handler(
                 num_predict=num_predict,
                 timeout_seconds=config.ollama.timeout_seconds,
                 strip_thinking=strip_thinking,
+                system_prompt=config.ollama.system_prompt,
             ):
+
 
                 accumulated_text += chunk
                 now = asyncio.get_running_loop().time()
