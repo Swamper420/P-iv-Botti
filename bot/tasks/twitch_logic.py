@@ -39,6 +39,49 @@ class TwitchStreamNotification:
         return "\n".join([line for line in lines if line])
 
 
+@dataclass(frozen=True)
+class TwitchStreamSummaryNotification:
+    broadcaster_user_id: str
+    broadcaster_login: str
+    broadcaster_name: str
+    duration_seconds: int
+    peak_viewers: int
+    title: str
+    game_name: str
+    stream_url: str
+    vod_url: str | None = None
+
+    def format_telegram_message(self) -> str:
+        hours = self.duration_seconds // 3600
+        minutes = (self.duration_seconds % 3600) // 60
+        if hours > 0:
+            duration_str = f"{hours}h {minutes}m"
+        else:
+            duration_str = f"{max(1, minutes)}m"
+
+        lines = [
+            f"🏁 <b>{self.broadcaster_name} stream ended!</b>",
+            "",
+            f"⏱ <b>Duration:</b> {duration_str}",
+            f"📊 <b>Peak Viewers:</b> {self.peak_viewers:,}" if self.peak_viewers > 0 else "",
+            f"🎮 <b>Category:</b> {self.game_name}" if self.game_name else "",
+            f"📝 <b>Title:</b> {self.title}" if self.title else "",
+            f"📹 <b>VOD:</b> <a href=\"{self.vod_url}\">{self.vod_url}</a>" if self.vod_url else f"🔗 <b>Channel:</b> <a href=\"{self.stream_url}\">{self.stream_url}</a>",
+        ]
+        return "\n".join([line for line in lines if line])
+
+
+@dataclass
+class StreamTracker:
+    broadcaster_user_id: str
+    broadcaster_login: str
+    broadcaster_name: str
+    start_time: float
+    title: str
+    game_name: str
+    peak_viewers: int = 0
+
+
 class TwitchClient:
     def __init__(self, config: TwitchConfig) -> None:
         self.config = config
@@ -118,7 +161,31 @@ class TwitchClient:
             LOGGER.error("Failed to fetch Twitch stream info for user %s: %s", user_id, err)
             return None
 
-    def subscribe_eventsub_websocket(self, session_id: str, broadcaster_user_id: str) -> bool:
+    def get_latest_vod_url(self, user_id: str) -> str | None:
+        """Fetches latest archive VOD URL for a user_id."""
+        token = self.get_app_token()
+        url = f"{self.config.helix_base_url}/videos?user_id={urllib.parse.quote(user_id)}&type=archive&first=1"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Client-ID": self.config.client_id,
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                videos = data.get("data", [])
+                if videos:
+                    return videos[0].get("url")
+                return None
+        except Exception as err:
+            LOGGER.error("Failed to fetch Twitch latest VOD for user %s: %s", user_id, err)
+            return None
+
+    def subscribe_eventsub_websocket(
+        self, session_id: str, broadcaster_user_id: str, event_type: str = "stream.online"
+    ) -> bool:
         if not self.config.user_access_token:
             LOGGER.warning(
                 "Cannot subscribe EventSub via WebSocket: TWITCH_USER_ACCESS_TOKEN is not configured "
@@ -129,7 +196,7 @@ class TwitchClient:
         token = self.config.user_access_token
         url = f"{self.config.helix_base_url}/eventsub/subscriptions"
         payload = {
-            "type": "stream.online",
+            "type": event_type,
             "version": "1",
             "condition": {
                 "broadcaster_user_id": str(broadcaster_user_id),
@@ -179,6 +246,7 @@ class TwitchClient:
 
 
 OnStreamOnlineCallback = Callable[[TwitchStreamNotification], Coroutine[Any, Any, None]]
+OnStreamOfflineCallback = Callable[[TwitchStreamSummaryNotification], Coroutine[Any, Any, None]]
 OnTokenExpiredCallback = Callable[[str], Coroutine[Any, Any, None]]
 
 
@@ -189,13 +257,16 @@ class TwitchEventSubNotifier:
         on_stream_online: OnStreamOnlineCallback,
         client: TwitchClient | None = None,
         on_token_expired: OnTokenExpiredCallback | None = None,
+        on_stream_offline: OnStreamOfflineCallback | None = None,
     ) -> None:
         self.config = config
         self.on_stream_online = on_stream_online
+        self.on_stream_offline = on_stream_offline
         self.on_token_expired = on_token_expired
         self.client = client or TwitchClient(config)
         self._user_map: dict[str, str] = {}  # {user_id: login}
         self._live_user_ids: set[str] = set()
+        self._active_stream_trackers: dict[str, StreamTracker] = {}
         self._use_polling_fallback = False
         self._running = False
         self._token_expired_notified = False
@@ -262,12 +333,15 @@ class TwitchEventSubNotifier:
                     success_count = 0
                     if session_id:
                         for uid in self._user_map.keys():
-                            ok = await asyncio.to_thread(
-                                self.client.subscribe_eventsub_websocket, session_id, uid
+                            ok_online = await asyncio.to_thread(
+                                self.client.subscribe_eventsub_websocket, session_id, uid, "stream.online"
                             )
-                            if ok:
+                            ok_offline = await asyncio.to_thread(
+                                self.client.subscribe_eventsub_websocket, session_id, uid, "stream.offline"
+                            )
+                            if ok_online and ok_offline:
                                 success_count += 1
-                                LOGGER.info("Subscribed stream.online for Twitch user %s", uid)
+                                LOGGER.info("Subscribed stream events for Twitch user %s", uid)
 
                     if success_count == 0 and self._user_map:
                         LOGGER.warning(
@@ -298,6 +372,8 @@ class TwitchEventSubNotifier:
                     sub_type = subscription.get("type")
                     if sub_type == "stream.online":
                         await self._handle_stream_online_event(payload.get("event", {}))
+                    elif sub_type == "stream.offline":
+                        await self._handle_stream_offline_event(payload.get("event", {}))
 
                 elif message_type == "session_keepalive":
                     pass
@@ -318,6 +394,26 @@ class TwitchEventSubNotifier:
         game_name = stream_info.get("game_name", "") if stream_info else ""
         thumbnail_template = stream_info.get("thumbnail_url", "") if stream_info else ""
         thumbnail_url = thumbnail_template.replace("{width}", "1280").replace("{height}", "720") if thumbnail_template else ""
+        viewer_count = int(stream_info.get("viewer_count", 0)) if stream_info else 0
+
+        start_ts = time.time()
+        if started_at:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                start_ts = dt.timestamp()
+            except Exception:
+                pass
+
+        self._active_stream_trackers[user_id] = StreamTracker(
+            broadcaster_user_id=user_id,
+            broadcaster_login=login,
+            broadcaster_name=name,
+            start_time=start_ts,
+            title=title,
+            game_name=game_name,
+            peak_viewers=viewer_count,
+        )
 
         notification = TwitchStreamNotification(
             broadcaster_user_id=user_id,
@@ -335,6 +431,38 @@ class TwitchEventSubNotifier:
         except Exception as err:
             LOGGER.error("Failed executing on_stream_online callback for %s: %s", login, err, exc_info=True)
 
+    async def _handle_stream_offline_event(self, event: dict[str, Any]) -> None:
+        user_id = str(event.get("broadcaster_user_id", ""))
+        login = str(event.get("broadcaster_user_login", "")).lower()
+        name = str(event.get("broadcaster_user_name", login))
+
+        LOGGER.info("Received stream.offline event for %s (%s)", name, login)
+
+        tracker = self._active_stream_trackers.pop(user_id, None)
+        now = time.time()
+        start_ts = tracker.start_time if tracker else now
+        duration_seconds = max(0, int(now - start_ts))
+
+        vod_url = await asyncio.to_thread(self.client.get_latest_vod_url, user_id)
+
+        summary = TwitchStreamSummaryNotification(
+            broadcaster_user_id=user_id,
+            broadcaster_login=tracker.broadcaster_login if tracker else login,
+            broadcaster_name=tracker.broadcaster_name if tracker else name,
+            duration_seconds=duration_seconds,
+            peak_viewers=tracker.peak_viewers if tracker else 0,
+            title=tracker.title if tracker else "",
+            game_name=tracker.game_name if tracker else "",
+            stream_url=f"https://twitch.tv/{tracker.broadcaster_login if tracker else login}",
+            vod_url=vod_url,
+        )
+
+        if self.on_stream_offline:
+            try:
+                await self.on_stream_offline(summary)
+            except Exception as err:
+                LOGGER.error("Failed executing on_stream_offline callback for %s: %s", login, err, exc_info=True)
+
     async def _run_polling_loop(self) -> None:
         LOGGER.info("Starting Twitch polling fallback loop (checking every %ds)...", self.config.poll_interval_seconds)
         while self._running:
@@ -346,13 +474,34 @@ class TwitchEventSubNotifier:
                     stream_info = await asyncio.to_thread(self.client.get_stream_info, uid)
                     if stream_info:
                         currently_live.add(uid)
+                        viewer_count = int(stream_info.get("viewer_count", 0))
+                        title = stream_info.get("title", "")
+                        game_name = stream_info.get("game_name", "")
+                        name = stream_info.get("user_name", login)
+
                         if uid not in self._live_user_ids:
-                            title = stream_info.get("title", "")
-                            game_name = stream_info.get("game_name", "")
-                            name = stream_info.get("user_name", login)
                             thumbnail_template = stream_info.get("thumbnail_url", "")
                             thumbnail_url = thumbnail_template.replace("{width}", "1280").replace("{height}", "720") if thumbnail_template else ""
                             started_at = stream_info.get("started_at", "")
+
+                            start_ts = time.time()
+                            if started_at:
+                                try:
+                                    from datetime import datetime
+                                    dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                                    start_ts = dt.timestamp()
+                                except Exception:
+                                    pass
+
+                            self._active_stream_trackers[uid] = StreamTracker(
+                                broadcaster_user_id=uid,
+                                broadcaster_login=login,
+                                broadcaster_name=name,
+                                start_time=start_ts,
+                                title=title,
+                                game_name=game_name,
+                                peak_viewers=viewer_count,
+                            )
 
                             notification = TwitchStreamNotification(
                                 broadcaster_user_id=uid,
@@ -365,6 +514,41 @@ class TwitchEventSubNotifier:
                                 started_at=started_at,
                             )
                             await self.on_stream_online(notification)
+                        else:
+                            tracker = self._active_stream_trackers.get(uid)
+                            if tracker:
+                                tracker.peak_viewers = max(tracker.peak_viewers, viewer_count)
+                                if title:
+                                    tracker.title = title
+                                if game_name:
+                                    tracker.game_name = game_name
+
+                # Check for channels that went offline
+                went_offline = self._live_user_ids - currently_live
+                for uid in went_offline:
+                    tracker = self._active_stream_trackers.pop(uid, None)
+                    now = time.time()
+                    start_ts = tracker.start_time if tracker else now
+                    duration_seconds = max(0, int(now - start_ts))
+                    login = tracker.broadcaster_login if tracker else uid
+
+                    vod_url = await asyncio.to_thread(self.client.get_latest_vod_url, uid)
+                    summary = TwitchStreamSummaryNotification(
+                        broadcaster_user_id=uid,
+                        broadcaster_login=login,
+                        broadcaster_name=tracker.broadcaster_name if tracker else login,
+                        duration_seconds=duration_seconds,
+                        peak_viewers=tracker.peak_viewers if tracker else 0,
+                        title=tracker.title if tracker else "",
+                        game_name=tracker.game_name if tracker else "",
+                        stream_url=f"https://twitch.tv/{login}",
+                        vod_url=vod_url,
+                    )
+                    if self.on_stream_offline:
+                        try:
+                            await self.on_stream_offline(summary)
+                        except Exception as err:
+                            LOGGER.error("Failed executing on_stream_offline callback for %s: %s", login, err, exc_info=True)
 
                 self._live_user_ids = currently_live
             except asyncio.CancelledError:

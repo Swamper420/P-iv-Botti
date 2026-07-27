@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING
 
 from bot.active_chats import load_active_chat_ids
 from bot.config import BotConfig
-from bot.tasks.twitch_logic import TwitchEventSubNotifier, TwitchStreamNotification
+from bot.tasks.twitch_logic import (
+    TwitchEventSubNotifier,
+    TwitchStreamNotification,
+    TwitchStreamSummaryNotification,
+)
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -21,6 +25,7 @@ class TwitchTask:
         self.notifier = TwitchEventSubNotifier(
             config=config.twitch,
             on_stream_online=self._handle_stream_online,
+            on_stream_offline=self._handle_stream_offline,
             on_token_expired=self._handle_token_expired,
         )
         self._task: asyncio.Task[None] | None = None
@@ -84,6 +89,25 @@ class TwitchTask:
                         )
                     except Exception as fallback_err:
                         LOGGER.error("Fallback text notification also failed for chat %s: %s", chat_id, fallback_err)
+
+    async def _handle_stream_offline(self, summary: TwitchStreamSummaryNotification) -> None:
+        active_chat_ids = load_active_chat_ids(self.config.storage_dir)
+        if not active_chat_ids:
+            LOGGER.info("No active chat IDs stored. Skipping Twitch stream summary notification.")
+            return
+
+        message = summary.format_telegram_message()
+
+        for chat_id in active_chat_ids:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode="HTML",
+                    disable_web_page_preview=False,
+                )
+            except Exception as err:
+                LOGGER.error("Failed to send Twitch stream offline summary to chat %s: %s", chat_id, err)
 
     def start(self) -> None:
         if self.config.twitch.is_configured:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,6 +9,7 @@ from bot.tasks.twitch_logic import (
     TwitchClient,
     TwitchEventSubNotifier,
     TwitchStreamNotification,
+    TwitchStreamSummaryNotification,
 )
 
 
@@ -47,6 +49,45 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Valorant Ranked", msg)
         self.assertIn("Valorant", msg)
         self.assertIn("https://twitch.tv/shroud", msg)
+
+    def test_stream_summary_notification_formatting(self) -> None:
+        summary = TwitchStreamSummaryNotification(
+            broadcaster_user_id="123",
+            broadcaster_login="shroud",
+            broadcaster_name="shroud",
+            duration_seconds=16320,  # 4h 32m
+            peak_viewers=24510,
+            title="Valorant Ranked",
+            game_name="Valorant",
+            stream_url="https://twitch.tv/shroud",
+            vod_url="https://twitch.tv/videos/99999",
+        )
+        msg = summary.format_telegram_message()
+        self.assertIn("shroud stream ended!", msg)
+        self.assertIn("4h 32m", msg)
+        self.assertIn("24,510", msg)
+        self.assertIn("Valorant", msg)
+        self.assertIn("https://twitch.tv/videos/99999", msg)
+
+    @patch("urllib.request.urlopen")
+    def test_twitch_client_get_latest_vod_url(self, mock_urlopen: MagicMock) -> None:
+        mock_token_resp = MagicMock()
+        mock_token_resp.read.return_value = json.dumps({"access_token": "t", "expires_in": 3600}).encode("utf-8")
+        mock_token_resp.__enter__.return_value = mock_token_resp
+
+        mock_vod_resp = MagicMock()
+        mock_vod_resp.read.return_value = json.dumps({
+            "data": [{"url": "https://twitch.tv/videos/12345"}]
+        }).encode("utf-8")
+        mock_vod_resp.__enter__.return_value = mock_vod_resp
+
+        mock_urlopen.side_effect = [mock_token_resp, mock_vod_resp]
+
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("shroud",))
+        client = TwitchClient(cfg)
+        vod_url = client.get_latest_vod_url("1001")
+
+        self.assertEqual(vod_url, "https://twitch.tv/videos/12345")
 
     @patch("urllib.request.urlopen")
     def test_twitch_client_get_app_token(self, mock_urlopen: MagicMock) -> None:
@@ -210,8 +251,58 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(token_errors), 1)
         self.assertIn("TWITCH_USER_ACCESS_TOKEN", token_errors[0])
 
+    async def test_offline_detection_triggers_summary_callback(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("shroud",))
+        mock_client = MagicMock(spec=TwitchClient)
+        mock_client.get_user_ids.return_value = {"shroud": "1001"}
+        mock_client.get_latest_vod_url.return_value = "https://twitch.tv/videos/12345"
+
+        summaries: list[TwitchStreamSummaryNotification] = []
+
+        async def on_online(_: TwitchStreamNotification) -> None:
+            pass
+
+        async def on_offline(s: TwitchStreamSummaryNotification) -> None:
+            summaries.append(s)
+
+        notifier = TwitchEventSubNotifier(
+            config=cfg,
+            on_stream_online=on_online,
+            on_stream_offline=on_offline,
+            client=mock_client,
+        )
+
+        call_count = 0
+
+        def mock_get_stream_info(uid: str):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {
+                    "title": "CS2 Major",
+                    "game_name": "Counter-Strike 2",
+                    "user_name": "shroud",
+                    "viewer_count": 15000,
+                    "started_at": "2026-07-27T17:00:00Z",
+                }
+            return None
+
+        mock_client.get_stream_info.side_effect = mock_get_stream_info
+
+        with patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError()]):
+            try:
+                notifier._running = True
+                await notifier._run_polling_loop()
+            except asyncio.CancelledError:
+                pass
+
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].broadcaster_login, "shroud")
+        self.assertEqual(summaries[0].vod_url, "https://twitch.tv/videos/12345")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
