@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -118,13 +119,13 @@ class TwitchClient:
             return None
 
     def subscribe_eventsub_websocket(self, session_id: str, broadcaster_user_id: str) -> bool:
-        token = self.get_app_token()
+        token = self.config.user_access_token or self.get_app_token()
         url = f"{self.config.helix_base_url}/eventsub/subscriptions"
         payload = {
             "type": "stream.online",
             "version": "1",
             "condition": {
-                "broadcaster_user_id": broadcaster_user_id,
+                "broadcaster_user_id": str(broadcaster_user_id),
             },
             "transport": {
                 "method": "websocket",
@@ -145,6 +146,18 @@ class TwitchClient:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status in (200, 202)
+        except urllib.error.HTTPError as err:
+            try:
+                body_text = err.read().decode("utf-8", errors="ignore")
+            except Exception:
+                body_text = ""
+            LOGGER.error(
+                "Failed to subscribe EventSub for broadcaster %s: %s - Body: %s",
+                broadcaster_user_id,
+                err,
+                body_text,
+            )
+            return False
         except Exception as err:
             LOGGER.error("Failed to subscribe EventSub for broadcaster %s: %s", broadcaster_user_id, err)
             return False
@@ -164,6 +177,8 @@ class TwitchEventSubNotifier:
         self.on_stream_online = on_stream_online
         self.client = client or TwitchClient(config)
         self._user_map: dict[str, str] = {}  # {user_id: login}
+        self._live_user_ids: set[str] = set()
+        self._use_polling_fallback = False
         self._running = False
 
     async def start(self) -> None:
@@ -175,8 +190,11 @@ class TwitchEventSubNotifier:
         ws_url = self.config.websocket_url
 
         while self._running:
+            if self._use_polling_fallback:
+                await self._run_polling_loop()
+                break
+
             try:
-                # Resolve channel user IDs before connecting
                 user_id_map = await asyncio.to_thread(self.client.get_user_ids, self.config.channels)
                 self._user_map = {uid: login for login, uid in user_id_map.items()}
 
@@ -192,9 +210,9 @@ class TwitchEventSubNotifier:
                 self._running = False
                 break
             except Exception as err:
-                LOGGER.error("Error in Twitch EventSub WebSocket loop: %s", err, exc_info=True)
+                LOGGER.error("Error in Twitch EventSub WebSocket loop: %s. Switching to polling fallback.", err, exc_info=True)
+                self._use_polling_fallback = True
                 ws_url = self.config.websocket_url
-                await asyncio.sleep(self.config.reconnect_delay_seconds)
 
     async def _run_websocket_session(self, ws_url: str) -> str:
         """Runs single WebSocket session loop. Returns next websocket URL (for reconnect) or base URL."""
@@ -214,13 +232,24 @@ class TwitchEventSubNotifier:
                 if message_type == "session_welcome":
                     session_id = payload.get("session", {}).get("id")
                     LOGGER.info("Twitch EventSub WebSocket connected (session: %s). Subscribing channels...", session_id)
+                    success_count = 0
                     if session_id:
                         for uid in self._user_map.keys():
                             ok = await asyncio.to_thread(
                                 self.client.subscribe_eventsub_websocket, session_id, uid
                             )
                             if ok:
+                                success_count += 1
                                 LOGGER.info("Subscribed stream.online for Twitch user %s", uid)
+
+                    if success_count == 0 and self._user_map:
+                        LOGGER.warning(
+                            "EventSub WebSocket subscriptions failed (Twitch requires a User Access Token for WebSockets). "
+                            "Switching automatically to periodic API polling (interval: %ds)...",
+                            self.config.poll_interval_seconds,
+                        )
+                        self._use_polling_fallback = True
+                        break
 
                 elif message_type == "session_reconnect":
                     reconnect_url = payload.get("session", {}).get("reconnect_url")
@@ -248,7 +277,6 @@ class TwitchEventSubNotifier:
 
         LOGGER.info("Received stream.online event for %s (%s)", name, login)
 
-        # Query Helix streams API for title & game category
         stream_info = await asyncio.to_thread(self.client.get_stream_info, user_id)
 
         title = stream_info.get("title", "") if stream_info else ""
@@ -271,3 +299,43 @@ class TwitchEventSubNotifier:
             await self.on_stream_online(notification)
         except Exception as err:
             LOGGER.error("Failed executing on_stream_online callback for %s: %s", login, err, exc_info=True)
+
+    async def _run_polling_loop(self) -> None:
+        LOGGER.info("Starting Twitch polling fallback loop (checking every %ds)...", self.config.poll_interval_seconds)
+        while self._running:
+            try:
+                user_id_map = await asyncio.to_thread(self.client.get_user_ids, self.config.channels)
+                currently_live: set[str] = set()
+
+                for login, uid in user_id_map.items():
+                    stream_info = await asyncio.to_thread(self.client.get_stream_info, uid)
+                    if stream_info:
+                        currently_live.add(uid)
+                        if uid not in self._live_user_ids:
+                            title = stream_info.get("title", "")
+                            game_name = stream_info.get("game_name", "")
+                            name = stream_info.get("user_name", login)
+                            thumbnail_template = stream_info.get("thumbnail_url", "")
+                            thumbnail_url = thumbnail_template.replace("{width}", "1280").replace("{height}", "720") if thumbnail_template else ""
+                            started_at = stream_info.get("started_at", "")
+
+                            notification = TwitchStreamNotification(
+                                broadcaster_user_id=uid,
+                                broadcaster_login=login,
+                                broadcaster_name=name,
+                                title=title,
+                                game_name=game_name,
+                                stream_url=f"https://twitch.tv/{login}",
+                                thumbnail_url=thumbnail_url,
+                                started_at=started_at,
+                            )
+                            await self.on_stream_online(notification)
+
+                self._live_user_ids = currently_live
+            except asyncio.CancelledError:
+                LOGGER.info("Twitch polling task cancelled.")
+                break
+            except Exception as err:
+                LOGGER.error("Error in Twitch polling fallback loop: %s", err, exc_info=True)
+
+            await asyncio.sleep(self.config.poll_interval_seconds)

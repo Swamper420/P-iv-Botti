@@ -67,15 +67,18 @@ class OllamaConfig:
 class TwitchConfig:
     client_id: str = ""
     client_secret: str = ""
+    user_access_token: str = ""
     channels: tuple[str, ...] = ()
     websocket_url: str = "wss://eventsub.wss.twitch.tv/ws"
     token_url: str = "https://id.twitch.tv/oauth2/token"
     helix_base_url: str = "https://api.twitch.tv/helix"
     reconnect_delay_seconds: int = 5
+    poll_interval_seconds: int = 60
 
     @property
     def is_configured(self) -> bool:
         return bool(self.client_id and self.client_secret and self.channels)
+
 
 
 @dataclass(frozen=True)
@@ -293,6 +296,7 @@ class BotConfig:
         twitch_config = TwitchConfig(
             client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
             client_secret=os.getenv("TWITCH_CLIENT_SECRET", "").strip(),
+            user_access_token=os.getenv("TWITCH_USER_ACCESS_TOKEN", "").strip(),
             channels=twitch_channels,
             websocket_url=os.getenv(
                 "TWITCH_WEBSOCKET_URL", "wss://eventsub.wss.twitch.tv/ws"
@@ -306,7 +310,11 @@ class BotConfig:
             reconnect_delay_seconds=int(
                 os.getenv("TWITCH_RECONNECT_DELAY_SECONDS", "5")
             ),
+            poll_interval_seconds=int(
+                os.getenv("TWITCH_POLL_INTERVAL_SECONDS", "60")
+            ),
         )
+
 
         return cls(
             telegram_bot_token=token,

@@ -13,10 +13,19 @@ def split_message(text: str, max_length: int = 5000) -> list[str]:
     return [text[i : i + max_length] for i in range(0, len(text), max_length)]
 
 
-async def reply_in_chunks(update: Update, reply: str, max_reply_length: int) -> None:
+async def reply_in_chunks(
+    update: Update,
+    reply: str,
+    max_reply_length: int,
+    parse_mode: str | None = None,
+) -> None:
     message = update.effective_message
     if message is None:
         return
 
     for chunk in split_message(reply, max_reply_length):
-        await message.reply_text(chunk)
+        if parse_mode:
+            await message.reply_text(chunk, parse_mode=parse_mode)
+        else:
+            await message.reply_text(chunk)
+
