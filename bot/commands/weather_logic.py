@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from bot.config import BotConfig
+from bot.config import BotConfig, WeatherConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,13 +35,11 @@ def parse_weather_camera_location(text: str | None) -> tuple[bool, str | None]:
 
 def _fetch_json(url: str, timeout_seconds: int, headers: dict[str, str] | None = None) -> dict:
     req_headers = dict(headers) if headers else {}
-    # Digitraffic API requires gzip compression or it returns a 406 Not Acceptable
     req_headers["Accept-Encoding"] = "gzip"
 
     request = Request(url, headers=req_headers)
     with urlopen(request, timeout=timeout_seconds) as response:
         data = response.read()
-        # Decompress the data if the server sent it back as gzip
         if response.info().get("Content-Encoding") == "gzip":
             data = gzip.decompress(data)
         return json.loads(data.decode("utf-8"))
@@ -61,15 +59,24 @@ def _download_bytes(
         return data
 
 
-def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes | None, str]:
+def _extract_weather_config(config: WeatherConfig | BotConfig) -> WeatherConfig:
+    if isinstance(config, WeatherConfig):
+        return config
+    return config.weather
+
+
+def get_weather_cam_data(
+    location_query: str, config: WeatherConfig | BotConfig
+) -> tuple[bytes | None, str]:
+    cfg = _extract_weather_config(config)
     station_headers = {
-        "Digitraffic-User": config.digitraffic_user,
+        "Digitraffic-User": cfg.digitraffic_user,
         "If-None-Match": "",
     }
     try:
         data = _fetch_json(
-            config.weathercam_stations_url,
-            config.weather_api_timeout_seconds,
+            cfg.weathercam_stations_url,
+            cfg.timeout_seconds,
             headers=station_headers,
         )
     except TimeoutError:
@@ -98,14 +105,14 @@ def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes 
     except (KeyError, IndexError, TypeError):
         return None, "Kamera ei ole saatavilla"
 
-    image_url = f"{config.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
+    image_url = f"{cfg.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
     image_headers = {
-        "Digitraffic-User": config.digitraffic_user,
+        "Digitraffic-User": cfg.digitraffic_user,
         "If-None-Match": "",
     }
     try:
         img_data = _download_bytes(
-            image_url, config.weather_api_timeout_seconds, headers=image_headers
+            image_url, cfg.timeout_seconds, headers=image_headers
         )
     except TimeoutError:
         LOGGER.exception("Weather camera image download timed out")
@@ -117,22 +124,25 @@ def get_weather_cam_data(location_query: str, config: BotConfig) -> tuple[bytes 
     return img_data, f"{camera_id}.jpg"
 
 
-def get_openweather_summary(location_query: str, config: BotConfig) -> str | None:
-    if not config.openweather_api_key:
+def get_openweather_summary(
+    location_query: str, config: WeatherConfig | BotConfig
+) -> str | None:
+    cfg = _extract_weather_config(config)
+    if not cfg.openweather_api_key:
         return None
 
     params = urlencode(
         {
             "q": location_query,
-            "appid": config.openweather_api_key,
+            "appid": cfg.openweather_api_key,
             "units": "metric",
             "lang": "fi",
         }
     )
-    url = f"{config.openweather_current_url}?{params}"
+    url = f"{cfg.openweather_current_url}?{params}"
 
     try:
-        data = _fetch_json(url, config.weather_api_timeout_seconds)
+        data = _fetch_json(url, cfg.timeout_seconds)
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
         LOGGER.warning("OpenWeather fetch failed for location %s", location_query)
         return None

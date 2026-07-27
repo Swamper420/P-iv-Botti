@@ -6,10 +6,10 @@ from collections.abc import Awaitable, Callable
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from bot.active_chats import track_active_chat
+from bot.commands.common import command_handler
+from bot.commands.hoi_logic import add_users, list_all, ping_list, remove_users
 from bot.commands.message_utils import reply_in_chunks
 from bot.config import BotConfig
-from bot.commands.hoi_logic import add_users, list_all, ping_list, remove_users
 
 COMMAND_USAGE = "!hoi | !hoi <lista> | !hoi @kayttaja <lista> | !hoijaa @kayttaja <lista>"
 
@@ -17,6 +17,7 @@ COMMAND_USAGE = "!hoi | !hoi <lista> | !hoi @kayttaja <lista> | !hoijaa @kayttaj
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
+    @command_handler(config)
     async def handle_hoi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
 
@@ -24,8 +25,6 @@ def _build_handler(
         chat = update.effective_chat
         if not message or not message.text or not chat:
             return
-
-        track_active_chat(update, config.storage_dir)
 
         text = message.text.strip()
         match = re.match(r"(?i)^!(hoi|hoijaa)(?:\s+(.+))?$", text)
@@ -44,10 +43,8 @@ def _build_handler(
             else:
                 args = args_str.split()
                 if len(args) == 1:
-                    # e.g., !hoi listname
                     reply_text = ping_list(config.storage_dir, chat_id, args[0])
                 else:
-                    # e.g., !hoi @user listname or !hoi @user1 @user2 listname
                     list_name = args[-1]
                     users = args[:-1]
                     reply_text = add_users(config.storage_dir, chat_id, list_name, users)
@@ -74,10 +71,9 @@ def _build_handler(
 
 
 def register(application: Application, config: BotConfig) -> None:
-    # Captures !hoi and !hoijaa along with any trailing arguments
     application.add_handler(
         MessageHandler(
             filters.Regex(r"(?i)^\s*!(hoi|hoijaa)\b"),
-            _build_handler(config)
+            _build_handler(config),
         )
     )

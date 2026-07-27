@@ -23,23 +23,91 @@ def _load_env_file(env_path: Path) -> None:
 
 
 @dataclass(frozen=True)
-class BotConfig:
-    telegram_bot_token: str
-    storage_dir: Path
+class WeatherConfig:
     openweather_api_key: str
     weathercam_stations_url: str
     weathercam_image_base_url: str
     openweather_current_url: str
-    weather_api_timeout_seconds: int
+    timeout_seconds: int
     digitraffic_user: str
+
+
+@dataclass(frozen=True)
+class Cs2RssConfig:
+    url: str
+    poll_interval_seconds: int
+    request_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class NaamaConfig:
+    model_name: str = "yolo26n-seg.pt"
+    confidence_threshold: float = 0.15
+    mask_threshold: float = 0.35
+    max_image_bytes: int = 10_000_000
+
+
+@dataclass(frozen=True)
+class BotConfig:
+    telegram_bot_token: str
+    storage_dir: Path
     max_reply_length: int
-    steam_cs2_rss_url: str
-    steam_rss_poll_interval_seconds: int
-    steam_rss_request_timeout_seconds: int
-    naama_model_name: str = "yolo26n-seg.pt"
-    naama_confidence_threshold: float = 0.15
-    naama_mask_threshold: float = 0.35
-    naama_max_image_bytes: int = 10_000_000
+    weather: WeatherConfig
+    cs2_rss: Cs2RssConfig
+    naama: NaamaConfig
+
+    # Backward compatibility properties
+    @property
+    def openweather_api_key(self) -> str:
+        return self.weather.openweather_api_key
+
+    @property
+    def weathercam_stations_url(self) -> str:
+        return self.weather.weathercam_stations_url
+
+    @property
+    def weathercam_image_base_url(self) -> str:
+        return self.weather.weathercam_image_base_url
+
+    @property
+    def openweather_current_url(self) -> str:
+        return self.weather.openweather_current_url
+
+    @property
+    def weather_api_timeout_seconds(self) -> int:
+        return self.weather.timeout_seconds
+
+    @property
+    def digitraffic_user(self) -> str:
+        return self.weather.digitraffic_user
+
+    @property
+    def steam_cs2_rss_url(self) -> str:
+        return self.cs2_rss.url
+
+    @property
+    def steam_rss_poll_interval_seconds(self) -> int:
+        return self.cs2_rss.poll_interval_seconds
+
+    @property
+    def steam_rss_request_timeout_seconds(self) -> int:
+        return self.cs2_rss.request_timeout_seconds
+
+    @property
+    def naama_model_name(self) -> str:
+        return self.naama.model_name
+
+    @property
+    def naama_confidence_threshold(self) -> float:
+        return self.naama.confidence_threshold
+
+    @property
+    def naama_mask_threshold(self) -> float:
+        return self.naama.mask_threshold
+
+    @property
+    def naama_max_image_bytes(self) -> int:
+        return self.naama.max_image_bytes
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -54,6 +122,7 @@ class BotConfig:
             os.getenv("STORAGE_DIR", str(project_root / "storage"))
         ).resolve()
         storage_dir.mkdir(parents=True, exist_ok=True)
+
         naama_confidence_threshold = float(
             os.getenv("NAAMA_CONFIDENCE_THRESHOLD", "0.15")
         )
@@ -70,9 +139,7 @@ class BotConfig:
         if naama_max_image_bytes < 1:
             raise ValueError("NAAMA_MAX_IMAGE_BYTES must be >= 1")
 
-        return cls(
-            telegram_bot_token=token,
-            storage_dir=storage_dir,
+        weather_config = WeatherConfig(
             openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
             weathercam_stations_url=os.getenv(
                 "WEATHERCAM_STATIONS_URL",
@@ -85,22 +152,36 @@ class BotConfig:
                 "OPENWEATHER_CURRENT_URL",
                 "https://api.openweathermap.org/data/2.5/weather",
             ).strip(),
-            weather_api_timeout_seconds=int(
+            timeout_seconds=int(
                 os.getenv("WEATHER_API_TIMEOUT_SECONDS", "30")
             ),
             digitraffic_user=os.getenv("DIGITRAFFIC_USER", "telegram-bot-1.0").strip(),
-            max_reply_length=int(os.getenv("MAX_REPLY_LENGTH", "5000")),
-            steam_cs2_rss_url=os.getenv(
+        )
+
+        cs2_rss_config = Cs2RssConfig(
+            url=os.getenv(
                 "STEAM_CS2_RSS_URL", "https://steamcommunity.com/games/csgo/rss/"
             ).strip(),
-            steam_rss_poll_interval_seconds=int(
+            poll_interval_seconds=int(
                 os.getenv("STEAM_RSS_POLL_INTERVAL_SECONDS", "300")
             ),
-            steam_rss_request_timeout_seconds=int(
+            request_timeout_seconds=int(
                 os.getenv("STEAM_RSS_REQUEST_TIMEOUT_SECONDS", "30")
             ),
-            naama_model_name=os.getenv("NAAMA_MODEL_NAME", "yolo26n-seg.pt").strip(),
-            naama_confidence_threshold=naama_confidence_threshold,
-            naama_mask_threshold=naama_mask_threshold,
-            naama_max_image_bytes=naama_max_image_bytes,
+        )
+
+        naama_config = NaamaConfig(
+            model_name=os.getenv("NAAMA_MODEL_NAME", "yolo26n-seg.pt").strip(),
+            confidence_threshold=naama_confidence_threshold,
+            mask_threshold=naama_mask_threshold,
+            max_image_bytes=naama_max_image_bytes,
+        )
+
+        return cls(
+            telegram_bot_token=token,
+            storage_dir=storage_dir,
+            max_reply_length=int(os.getenv("MAX_REPLY_LENGTH", "5000")),
+            weather=weather_config,
+            cs2_rss=cs2_rss_config,
+            naama=naama_config,
         )

@@ -1,6 +1,6 @@
 import unittest
 
-from bot.cs2_rss import Cs2UpdateItem, format_cs2_update, parse_cs2_rss_items
+from bot.tasks.cs2_rss import Cs2UpdateItem, format_cs2_update, parse_cs2_rss_items
 
 
 class Cs2RssTests(unittest.TestCase):

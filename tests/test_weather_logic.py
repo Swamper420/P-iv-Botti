@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.commands.weather_logic import get_weather_cam_data, parse_weather_camera_location
-from bot.config import BotConfig
+from bot.config import BotConfig, Cs2RssConfig, NaamaConfig, WeatherConfig
 
 
 class WeatherLogicTests(unittest.TestCase):
@@ -30,16 +30,21 @@ class WeatherLogicTests(unittest.TestCase):
         config = BotConfig(
             telegram_bot_token="token",
             storage_dir=Path("."),
-            openweather_api_key="",
-            weathercam_stations_url="https://stations.invalid",
-            weathercam_image_base_url="https://images.invalid",
-            openweather_current_url="https://api.openweathermap.org/data/2.5/weather",
-            weather_api_timeout_seconds=30,
-            digitraffic_user="telegram-bot-1.0",
             max_reply_length=5000,
-            steam_cs2_rss_url="https://steamcommunity.com/games/csgo/rss/",
-            steam_rss_poll_interval_seconds=300,
-            steam_rss_request_timeout_seconds=30,
+            weather=WeatherConfig(
+                openweather_api_key="",
+                weathercam_stations_url="https://stations.invalid",
+                weathercam_image_base_url="https://images.invalid",
+                openweather_current_url="https://api.openweathermap.org/data/2.5/weather",
+                timeout_seconds=30,
+                digitraffic_user="telegram-bot-1.0",
+            ),
+            cs2_rss=Cs2RssConfig(
+                url="https://steamcommunity.com/games/csgo/rss/",
+                poll_interval_seconds=300,
+                request_timeout_seconds=30,
+            ),
+            naama=NaamaConfig(),
         )
 
         with (

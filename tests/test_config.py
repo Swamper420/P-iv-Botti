@@ -26,6 +26,18 @@ class ConfigTests(unittest.TestCase):
         ):
             config = BotConfig.from_environment()
 
+        # Domain config checks
+        self.assertEqual(config.weather.openweather_api_key, "ow-key")
+        self.assertEqual(config.weather.timeout_seconds, 25)
+        self.assertEqual(config.cs2_rss.url, "https://steam.example/rss")
+        self.assertEqual(config.cs2_rss.poll_interval_seconds, 123)
+        self.assertEqual(config.cs2_rss.request_timeout_seconds, 9)
+        self.assertEqual(config.naama.model_name, "custom-naama-seg.pt")
+        self.assertEqual(config.naama.confidence_threshold, 0.25)
+        self.assertEqual(config.naama.mask_threshold, 0.45)
+        self.assertEqual(config.naama.max_image_bytes, 7654321)
+
+        # Backward compatibility property checks
         self.assertEqual(config.openweather_api_key, "ow-key")
         self.assertEqual(config.weather_api_timeout_seconds, 25)
         self.assertEqual(config.max_reply_length, 777)

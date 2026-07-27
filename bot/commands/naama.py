@@ -11,7 +11,7 @@ from telegram import InputFile, PhotoSize, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from bot.active_chats import track_active_chat
+from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.naama_logic import compose_naama_image
 from bot.config import BotConfig
@@ -67,12 +67,11 @@ def _parse_command(cmd: str) -> tuple[Literal["mirror", "sticker"], Literal["aut
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
+    @command_handler(config)
     async def handle_naama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if message is None:
             return
-
-        track_active_chat(update, config.storage_dir)
 
         target_photo, cmd_text = _extract_target_photo(message)
         if target_photo is None or cmd_text is None:
@@ -89,7 +88,8 @@ def _build_handler(
         photo_data = await tg_file.download_as_bytearray()
         photo_bytes = bytes(photo_data)
 
-        if len(photo_bytes) > config.naama_max_image_bytes:
+        naama_cfg = config.naama
+        if len(photo_bytes) > naama_cfg.max_image_bytes:
             await reply_in_chunks(
                 update,
                 "Kuva on liian suuri käsittelyyn.",
@@ -100,9 +100,9 @@ def _build_handler(
         processed = await asyncio.to_thread(
             compose_naama_image,
             photo_bytes,
-            model_name=config.naama_model_name,
-            confidence_threshold=config.naama_confidence_threshold,
-            mask_threshold=config.naama_mask_threshold,
+            model_name=naama_cfg.model_name,
+            confidence_threshold=naama_cfg.confidence_threshold,
+            mask_threshold=naama_cfg.mask_threshold,
             action=action,
             side=side,
         )

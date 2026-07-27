@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
 from telegram import Update
+
+from bot.storage import load_json_data, save_json_data
 
 LOGGER = logging.getLogger(__name__)
 ACTIVE_CHAT_IDS_FILE = "active_chat_ids.json"
@@ -16,15 +17,7 @@ def _active_chat_ids_path(storage_dir: Path) -> Path:
 
 def load_active_chat_ids(storage_dir: Path) -> set[int]:
     path = _active_chat_ids_path(storage_dir)
-    if not path.exists():
-        return set()
-
-    try:
-        raw_data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        LOGGER.exception("Failed to load active chat ids from %s", path)
-        return set()
-
+    raw_data = load_json_data(path, default_factory=list)
     if not isinstance(raw_data, list):
         return set()
 
@@ -39,7 +32,7 @@ def load_active_chat_ids(storage_dir: Path) -> set[int]:
 
 def _store_active_chat_ids(storage_dir: Path, chat_ids: set[int]) -> None:
     path = _active_chat_ids_path(storage_dir)
-    path.write_text(json.dumps(sorted(chat_ids)), encoding="utf-8")
+    save_json_data(path, sorted(chat_ids))
 
 
 def track_active_chat(update: Update, storage_dir: Path) -> None:

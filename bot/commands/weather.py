@@ -8,7 +8,7 @@ from telegram import InputFile, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from bot.active_chats import track_active_chat
+from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.weather_logic import (
     get_openweather_summary,
@@ -19,15 +19,15 @@ from bot.config import BotConfig
 
 COMMAND_USAGE = "!sääkuva <kaupunki>"
 
+
 def _build_handler(
     config: BotConfig,
 ) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
+    @command_handler(config)
     async def handle_weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if message is None:
             return
-
-        track_active_chat(update, config.storage_dir)
 
         matched, location = parse_weather_camera_location(message.text)
         if not matched:
@@ -45,9 +45,11 @@ def _build_handler(
             )
 
         weather_summary = await asyncio.to_thread(
-            get_openweather_summary, location, config
+            get_openweather_summary, location, config.weather
         )
-        img_data, result = await asyncio.to_thread(get_weather_cam_data, location, config)
+        img_data, result = await asyncio.to_thread(
+            get_weather_cam_data, location, config.weather
+        )
 
         if img_data is None:
             await reply_in_chunks(update, f"⚠️ {result}", config.max_reply_length)

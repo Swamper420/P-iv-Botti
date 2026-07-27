@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
+
+from bot.storage import load_json_data, save_json_data
 
 LOGGER = logging.getLogger(__name__)
 HOI_FILE = "hoi_lists.json"
@@ -14,21 +15,16 @@ def _get_path(storage_dir: Path) -> Path:
 
 def _load_data(storage_dir: Path) -> dict[str, dict[str, list[str]]]:
     path = _get_path(storage_dir)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data
-    except (OSError, json.JSONDecodeError):
-        LOGGER.exception("Failed to load hoi lists from %s", path)
+    data = load_json_data(path, default_factory=dict)
+    if isinstance(data, dict):
+        return data
     return {}
 
 
 def _save_data(storage_dir: Path, data: dict[str, dict[str, list[str]]]) -> None:
     path = _get_path(storage_dir)
     try:
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        save_json_data(path, data)
     except OSError:
         LOGGER.exception("Failed to save hoi lists to %s", path)
 
