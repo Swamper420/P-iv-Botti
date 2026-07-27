@@ -25,6 +25,7 @@ When extending this project:
   - `help.py` + `help_logic.py`
   - `hoi.py` + `hoi_logic.py`
   - `naama.py` + `naama_logic.py`
+  - `tts.py` + `tts_logic.py`
   - `twitch.py` + `twitch_logic.py`
   - `weather.py` + `weather_logic.py`
 - Shared command utilities in `bot/commands/`:
@@ -38,7 +39,8 @@ When extending this project:
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `TtsConfig`).
+
 
 
 - Active chat persistence is handled in `bot/active_chats.py` under `storage/active_chat_ids.json`.

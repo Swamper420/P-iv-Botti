@@ -27,6 +27,9 @@ class ConfigTests(unittest.TestCase):
                 "OLLAMA_MAX_NUM_PREDICT": "1500",
                 "OLLAMA_TIMEOUT_SECONDS": "60",
                 "OLLAMA_STRIP_THINKING": "true",
+                "TTS_BASE_URL": "http://tts.example:8080",
+                "TTS_TIMEOUT_SECONDS": "45",
+                "TTS_FORMAT": "ogg",
             },
             clear=False,
         ):
@@ -48,6 +51,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama.max_num_predict, 1500)
         self.assertEqual(config.ollama.timeout_seconds, 60)
         self.assertTrue(config.ollama.strip_thinking)
+        self.assertEqual(config.tts.base_url, "http://tts.example:8080")
+        self.assertEqual(config.tts.timeout_seconds, 45)
+        self.assertEqual(config.tts.format, "ogg")
 
         # Backward compatibility property checks
         self.assertEqual(config.openweather_api_key, "ow-key")
@@ -66,6 +72,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_max_num_predict, 1500)
         self.assertEqual(config.ollama_timeout_seconds, 60)
         self.assertTrue(config.ollama_strip_thinking)
+        self.assertEqual(config.tts_base_url, "http://tts.example:8080")
+        self.assertEqual(config.tts_timeout_seconds, 45)
+        self.assertEqual(config.tts_format, "ogg")
+
 
 
 

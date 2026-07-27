@@ -46,10 +46,11 @@ class CommandRegistrationTests(unittest.TestCase):
         register_commands(app, self._config())
 
         self.assertTrue(
-            {"aih", "help", "hoi", "naama", "weather"}.issubset(
+            {"aih", "help", "hoi", "naama", "tts", "weather"}.issubset(
                 discovered_names
             )
         )
+
         self.assertEqual(len(app.handlers), expected_count)
         self.assertTrue(all(isinstance(handler, MessageHandler) for handler in app.handlers))
         has_regex = any(isinstance(handler.filters, filters.Regex) for handler in app.handlers)
