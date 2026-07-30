@@ -80,6 +80,20 @@ class TwitchConfig:
         return bool(self.client_id and self.client_secret and self.channels)
 
 
+
+@dataclass(frozen=True)
+class ParannaConfig:
+    model_path: str = "storage/models/RealESRGAN_x4plus_anime_6B.pth"
+    model_url: str = (
+        "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth"
+    )
+    tile_size: int = 256
+    tile_pad: int = 10
+    max_input_dimension: int = 2560
+    max_output_dimension: int = 4096
+    jpeg_quality: int = 95
+    max_image_bytes: int = 15_000_000
+
 @dataclass(frozen=True)
 class TtsConfig:
     base_url: str = "http://localhost:8080"
@@ -98,8 +112,6 @@ class BotConfig:
     naama: NaamaConfig
     ollama: OllamaConfig = OllamaConfig()
     twitch: TwitchConfig = TwitchConfig()
-    tts: TtsConfig = TtsConfig()
-
 
 
 
@@ -341,21 +353,6 @@ class BotConfig:
             ),
         )
 
-        tts_timeout_seconds = int(os.getenv("TTS_TIMEOUT_SECONDS", "60"))
-        if tts_timeout_seconds < 1:
-            raise ValueError("TTS_TIMEOUT_SECONDS must be >= 1")
-
-        tts_error_message = (
-            os.getenv("TTS_ERROR_MESSAGE", "Virhe puheen synteesissä.").strip()
-            or "Virhe puheen synteesissä."
-        )
-
-        tts_config = TtsConfig(
-            base_url=os.getenv("TTS_BASE_URL", "http://localhost:8080").strip(),
-            timeout_seconds=tts_timeout_seconds,
-            format=os.getenv("TTS_FORMAT", "ogg").strip(),
-            error_message=tts_error_message,
-        )
 
         return cls(
             telegram_bot_token=token,
@@ -366,5 +363,4 @@ class BotConfig:
             naama=naama_config,
             ollama=ollama_config,
             twitch=twitch_config,
-            tts=tts_config,
         )
