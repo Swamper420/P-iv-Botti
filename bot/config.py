@@ -112,6 +112,9 @@ class BotConfig:
     naama: NaamaConfig
     ollama: OllamaConfig = OllamaConfig()
     twitch: TwitchConfig = TwitchConfig()
+    paranna: ParannaConfig = ParannaConfig()
+    tts: TtsConfig = TtsConfig()
+
 
 
 
@@ -354,6 +357,31 @@ class BotConfig:
         )
 
 
+        paranna_config = ParannaConfig(
+            model_path=os.getenv(
+                "PARANNA_MODEL_PATH", "storage/models/RealESRGAN_x4plus_anime_6B.pth"
+            ).strip(),
+            model_url=os.getenv(
+                "PARANNA_MODEL_URL",
+                "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+            ).strip(),
+            tile_size=int(os.getenv("PARANNA_TILE_SIZE", "256")),
+            tile_pad=int(os.getenv("PARANNA_TILE_PAD", "10")),
+            max_input_dimension=int(os.getenv("PARANNA_MAX_INPUT_DIMENSION", "2560")),
+            max_output_dimension=int(os.getenv("PARANNA_MAX_OUTPUT_DIMENSION", "4096")),
+            jpeg_quality=int(os.getenv("PARANNA_JPEG_QUALITY", "95")),
+            max_image_bytes=int(os.getenv("PARANNA_MAX_IMAGE_BYTES", "15000000")),
+        )
+
+        tts_config = TtsConfig(
+            base_url=os.getenv("TTS_BASE_URL", "http://localhost:8080").strip(),
+            timeout_seconds=int(os.getenv("TTS_TIMEOUT_SECONDS", "60")),
+            format=os.getenv("TTS_FORMAT", "ogg").strip(),
+            error_message=os.getenv(
+                "TTS_ERROR_MESSAGE", "Virhe puheen synteesissä."
+            ).strip(),
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -363,4 +391,6 @@ class BotConfig:
             naama=naama_config,
             ollama=ollama_config,
             twitch=twitch_config,
+            paranna=paranna_config,
+            tts=tts_config,
         )
