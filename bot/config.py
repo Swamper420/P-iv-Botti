@@ -103,6 +103,14 @@ class TtsConfig:
 
 
 @dataclass(frozen=True)
+class TelkkariConfig:
+    epg_url: str = "https://epgshare01.online/epgshare01/epg_ripper_FI1.xml.gz"
+    default_channels: tuple[int, ...] = (1, 2, 3, 4, 5, 6)
+    cache_timeout_seconds: int = 1800
+    timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -114,6 +122,8 @@ class BotConfig:
     twitch: TwitchConfig = TwitchConfig()
     paranna: ParannaConfig = ParannaConfig()
     tts: TtsConfig = TtsConfig()
+    telkkari: TelkkariConfig = TelkkariConfig()
+
 
 
 
@@ -382,6 +392,29 @@ class BotConfig:
             ).strip(),
         )
 
+        raw_telkkari_channels = os.getenv(
+            "TELKKARI_DEFAULT_CHANNELS", "1,2,3,4,5,6"
+        ).strip()
+        telkkari_default_channels = tuple(
+            int(c.strip())
+            for c in raw_telkkari_channels.split(",")
+            if c.strip().isdigit()
+        )
+        if not telkkari_default_channels:
+            telkkari_default_channels = (1, 2, 3, 4, 5, 6)
+
+        telkkari_config = TelkkariConfig(
+            epg_url=os.getenv(
+                "TELKKARI_EPG_URL",
+                "https://epgshare01.online/epgshare01/epg_ripper_FI1.xml.gz",
+            ).strip(),
+            default_channels=telkkari_default_channels,
+            cache_timeout_seconds=int(
+                os.getenv("TELKKARI_CACHE_TIMEOUT_SECONDS", "1800")
+            ),
+            timeout_seconds=int(os.getenv("TELKKARI_TIMEOUT_SECONDS", "30")),
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -393,4 +426,6 @@ class BotConfig:
             twitch=twitch_config,
             paranna=paranna_config,
             tts=tts_config,
+            telkkari=telkkari_config,
         )
+

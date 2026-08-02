@@ -31,6 +31,10 @@ class ConfigTests(unittest.TestCase):
                 "TTS_TIMEOUT_SECONDS": "45",
                 "TTS_FORMAT": "ogg",
                 "TTS_ERROR_MESSAGE": "Kustomoitu virhe",
+                "TELKKARI_EPG_URL": "https://example.com/epg.xml",
+                "TELKKARI_DEFAULT_CHANNELS": "1,2,3",
+                "TELKKARI_CACHE_TIMEOUT_SECONDS": "600",
+                "TELKKARI_TIMEOUT_SECONDS": "15",
             },
             clear=False,
         ):
@@ -56,6 +60,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tts.timeout_seconds, 45)
         self.assertEqual(config.tts.format, "ogg")
         self.assertEqual(config.tts.error_message, "Kustomoitu virhe")
+        self.assertEqual(config.telkkari.epg_url, "https://example.com/epg.xml")
+        self.assertEqual(config.telkkari.default_channels, (1, 2, 3))
+        self.assertEqual(config.telkkari.cache_timeout_seconds, 600)
+        self.assertEqual(config.telkkari.timeout_seconds, 15)
+
 
         # Backward compatibility property checks
         self.assertEqual(config.openweather_api_key, "ow-key")
