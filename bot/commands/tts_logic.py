@@ -13,14 +13,15 @@ import httpx
 def parse_tts_command(text: str) -> tuple[bool, str | None, str]:
     """Parse a TTS command string into (is_match, voice, text).
 
-    Syntax: [voice] puhuu: <text>
+    Syntax: [voice] puhuu [selkeästi]: <text>
     If voice is omitted, returns voice=None.
+    If 'selkeästi' is specified, adds '...' after each word to make the speech slower.
     """
     if not text:
         return False, None, ""
 
     match = re.match(
-        r"(?i)^\s*!?(?:([^\n:]+)\s+)?puhuu:\s*(.*)$",
+        r"(?i)^\s*!?(?:([^\n:]+)\s+)?puhuu(\s+selkeästi)?:\s*(.*)$",
         text,
         re.DOTALL,
     )
@@ -28,7 +29,8 @@ def parse_tts_command(text: str) -> tuple[bool, str | None, str]:
         return False, None, ""
 
     voice_raw = match.group(1)
-    prompt_text = (match.group(2) or "").strip()
+    is_slow = bool(match.group(2))
+    prompt_text = (match.group(3) or "").strip()
 
     voice: str | None = None
     if voice_raw:
@@ -36,7 +38,14 @@ def parse_tts_command(text: str) -> tuple[bool, str | None, str]:
         if voice_clean:
             voice = voice_clean
 
+    if is_slow and prompt_text:
+        words = prompt_text.split()
+        prompt_text = " ".join(
+            w if w.endswith("...") else f"{w}..." for w in words
+        )
+
     return True, voice, prompt_text
+
 
 
 def chunk_text(

@@ -15,7 +15,7 @@ from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
 
-COMMAND_USAGE = "*ääni* puhuu: <teksti> | puhuu: <teksti>"
+COMMAND_USAGE = "*ääni* puhuu: <teksti> | puhuu: <teksti> | *ääni* puhuu selkeästi: <teksti>"
 
 
 def _build_handler(
@@ -75,7 +75,8 @@ def _build_handler(
 def register(application: Application, config: BotConfig) -> None:
     application.add_handler(
         MessageHandler(
-            filters.Regex(r"(?i)^\s*!?(?:[^\n:]+\s+)?puhuu:"),
+            filters.Regex(r"(?i)^\s*!?(?:[^\n:]+\s+)?puhuu(?:\s+selkeästi)?:"),
             _build_handler(config),
         )
     )
+

@@ -49,6 +49,31 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(voice)
         self.assertEqual(text, "")
 
+    def test_parse_tts_command_selkeasti_default_voice(self) -> None:
+        is_match, voice, text = parse_tts_command("puhuu selkeästi: Terve maailma!")
+        self.assertTrue(is_match)
+        self.assertIsNone(voice)
+        self.assertEqual(text, "Terve... maailma!...")
+
+    def test_parse_tts_command_selkeasti_with_voice(self) -> None:
+        is_match, voice, text = parse_tts_command("Matti puhuu selkeästi: Terve maailma!")
+        self.assertTrue(is_match)
+        self.assertEqual(voice, "Matti")
+        self.assertEqual(text, "Terve... maailma!...")
+
+    def test_parse_tts_command_selkeasti_exclamation_prefix(self) -> None:
+        is_match, voice, text = parse_tts_command("!Pekka puhuu selkeästi: Hei kaveri")
+        self.assertTrue(is_match)
+        self.assertEqual(voice, "Pekka")
+        self.assertEqual(text, "Hei... kaveri...")
+
+    def test_parse_tts_command_selkeasti_existing_dots(self) -> None:
+        is_match, voice, text = parse_tts_command("puhuu selkeästi: Terve... maailma")
+        self.assertTrue(is_match)
+        self.assertIsNone(voice)
+        self.assertEqual(text, "Terve... maailma...")
+
+
     def test_chunk_text_padding_short_text(self) -> None:
         chunks = chunk_text("Hei!", max_chunk_size=50, min_chunk_len=10)
         self.assertEqual(len(chunks), 1)
