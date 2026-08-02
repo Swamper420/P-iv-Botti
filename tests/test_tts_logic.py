@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from bot.commands.tts_logic import parse_tts_command, synthesize_speech
+from bot.commands.tts_logic import (
+    chunk_text,
+    combine_audio_chunks,
+    parse_tts_command,
+    synthesize_speech,
+)
 
 
 class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
@@ -44,27 +49,67 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(voice)
         self.assertEqual(text, "")
 
-    async def test_synthesize_speech_success(self) -> None:
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_response = AsyncMock(spec=httpx.Response)
-        mock_response.content = b"fake-audio-bytes"
-        mock_response.raise_for_status = unittest.mock.MagicMock()
+    def test_chunk_text_padding_short_text(self) -> None:
+        chunks = chunk_text("Hei!", max_chunk_size=50, min_chunk_len=10)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0], "Hei!......")
+        self.assertGreaterEqual(len(chunks[0]), 10)
 
-        mock_client.post.return_value = mock_response
-
-        audio = await synthesize_speech(
-            base_url="http://localhost:8080",
-            text="Terve",
-            voice="Matti",
-            fmt="ogg",
-            timeout_seconds=30,
-            client=mock_client,
+    def test_chunk_text_splits_on_punctuation(self) -> None:
+        text = (
+            "Ensimmäinen lause on tässä, ja se on aika pitkä. "
+            "Toinen lause tulee tässä! Kolmas lause vastaa kysymykseen?"
         )
+        chunks = chunk_text(text, max_chunk_size=40, min_chunk_len=10)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 50)
+            self.assertGreaterEqual(len(chunk), 10)
 
-        self.assertEqual(audio, b"fake-audio-bytes")
-        mock_client.post.assert_called_once_with(
-            "http://localhost:8080/api/tts",
-            json={"text": "Terve", "format": "ogg", "voice": "Matti"},
+    def test_chunk_text_empty(self) -> None:
+        self.assertEqual(chunk_text(""), [])
+
+    async def test_combine_audio_chunks_single(self) -> None:
+        result = await combine_audio_chunks([b"audio1"])
+        self.assertEqual(result, b"audio1")
+
+    async def test_combine_audio_chunks_empty(self) -> None:
+        result = await combine_audio_chunks([])
+        self.assertEqual(result, b"")
+
+    async def test_synthesize_speech_multiple_chunks(self) -> None:
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response1 = AsyncMock(spec=httpx.Response)
+        mock_response1.content = b"chunk1-bytes"
+        mock_response1.raise_for_status = unittest.mock.MagicMock()
+
+        mock_response2 = AsyncMock(spec=httpx.Response)
+        mock_response2.content = b"chunk2-bytes"
+        mock_response2.raise_for_status = unittest.mock.MagicMock()
+
+        mock_client.post.side_effect = [mock_response1, mock_response2]
+
+        text = "Ensimmäinen lause, joka on pitkä. Toinen lause, joka on myös pitkä."
+        with patch(
+            "bot.commands.tts_logic.combine_audio_chunks",
+            new_callable=AsyncMock,
+            return_value=b"combined-audio",
+        ) as mock_combine:
+            audio = await synthesize_speech(
+                base_url="http://localhost:8080",
+                text=text,
+                voice="Matti",
+                fmt="ogg",
+                timeout_seconds=30,
+                max_chunk_size=40,
+                min_chunk_len=10,
+                client=mock_client,
+            )
+
+        self.assertEqual(audio, b"combined-audio")
+        self.assertEqual(mock_client.post.call_count, 2)
+        mock_combine.assert_called_once_with(
+            [b"chunk1-bytes", b"chunk2-bytes"], fmt="ogg"
         )
 
     async def test_handle_tts_error_response_on_exception(self) -> None:
@@ -128,4 +173,3 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
