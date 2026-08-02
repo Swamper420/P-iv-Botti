@@ -141,7 +141,7 @@ def get_channel_day_schedule(
         except Exception:
             continue
 
-        if stop_dt > today_start and start_dt < today_end:
+        if stop_dt > now and start_dt < today_end:
             title_elem = p.find("title")
             title = title_elem.text if title_elem is not None and title_elem.text else "Tuntematon ohjelma"
             today_items.append((start_dt, stop_dt, title))
@@ -149,7 +149,8 @@ def get_channel_day_schedule(
     today_items.sort(key=lambda x: x[0])
 
     if not today_items:
-        return f"Kanavan {ch_name} ohjelmatietoja ei löytynyt tälle päivälle."
+        return f"Kanavan {ch_name} ohjelmatietoja ei löytynyt loppupäivälle."
+
 
     lines = [f"📺 {ch_name} (tänään):", ""]
     for start_dt, stop_dt, title in today_items:

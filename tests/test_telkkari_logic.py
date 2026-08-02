@@ -64,9 +64,12 @@ class TelkkariLogicTests(unittest.TestCase):
 
         res = get_channel_day_schedule(1, self.config, now=now, xml_root=root)
         self.assertIn("📺 YLE TV1 (tänään):", res)
-        self.assertIn("08:00 - 09:00: Aamuuutiset", res)
+        # Past programs (08:00 - 09:00) should be excluded
+        self.assertNotIn("08:00 - 09:00: Aamuuutiset", res)
+        # Currently airing and future programs for today should be included
         self.assertIn("13:00 - 14:00: Uutiset 13:00", res)
         self.assertIn("20:00 - 20:30: Iltauutiset", res)
+
 
     def test_get_channel_day_schedule_unknown_channel(self) -> None:
         res = get_channel_day_schedule(99, self.config)
@@ -78,7 +81,8 @@ class TelkkariLogicTests(unittest.TestCase):
         # Channel 3 (MTV3) has no programmes in sample
         now = datetime(2026, 8, 2, 13, 15, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
         res = get_channel_day_schedule(3, self.config, now=now, xml_root=root)
-        self.assertIn("ohjelmatietoja ei löytynyt tälle päivälle", res)
+        self.assertIn("ohjelmatietoja ei löytynyt", res)
+
 
     def test_get_next_hour_schedule(self) -> None:
         root = ET.fromstring(SAMPLE_XMLTV)
