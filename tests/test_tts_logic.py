@@ -102,13 +102,50 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
         result = await combine_audio_chunks([])
         self.assertEqual(result, b"")
 
+    def test_extract_voice_ids(self) -> None:
+        from bot.commands.tts_logic import extract_voice_ids
+
+        data = {
+            "count": 2,
+            "voices": [
+                {"voice_id": "voice_fi"},
+                {"voice_id": "voice_en"},
+            ],
+        }
+        self.assertEqual(extract_voice_ids(data), ["voice_fi", "voice_en"])
+
+    def test_resolve_voice_exact_match(self) -> None:
+        from bot.commands.tts_logic import resolve_voice
+
+        available = ["voice_fi", "voice_en", "matti_speaker"]
+        self.assertEqual(resolve_voice("voice_fi", available), "voice_fi")
+        self.assertEqual(resolve_voice("VOICE_FI", available), "voice_fi")
+
+    def test_resolve_voice_fuzzy_match(self) -> None:
+        from bot.commands.tts_logic import resolve_voice
+
+        available = ["voice_fi", "voice_en", "matti_speaker"]
+        self.assertEqual(resolve_voice("matti", available), "matti_speaker")
+
+    def test_resolve_voice_none_or_empty(self) -> None:
+        from bot.commands.tts_logic import resolve_voice
+
+        self.assertIsNone(resolve_voice(None, ["voice_fi"]))
+        self.assertEqual(resolve_voice("matti", []), "matti")
+
+
     async def test_synthesize_speech_multiple_chunks(self) -> None:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_response1 = AsyncMock(spec=httpx.Response)
+        mock_voices_resp = unittest.mock.MagicMock(spec=httpx.Response)
+        mock_voices_resp.json.return_value = {"count": 1, "voices": [{"voice_id": "Matti"}]}
+        mock_voices_resp.raise_for_status = unittest.mock.MagicMock()
+        mock_client.get.return_value = mock_voices_resp
+
+        mock_response1 = unittest.mock.MagicMock(spec=httpx.Response)
         mock_response1.content = b"chunk1-bytes"
         mock_response1.raise_for_status = unittest.mock.MagicMock()
 
-        mock_response2 = AsyncMock(spec=httpx.Response)
+        mock_response2 = unittest.mock.MagicMock(spec=httpx.Response)
         mock_response2.content = b"chunk2-bytes"
         mock_response2.raise_for_status = unittest.mock.MagicMock()
 
@@ -156,6 +193,33 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
         mock_combine.assert_called_once_with(
             [b"chunk1-bytes", b"chunk2-bytes"], fmt="ogg"
         )
+
+    async def test_synthesize_speech_fuzzy_voice_resolution(self) -> None:
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_voices_resp = unittest.mock.MagicMock(spec=httpx.Response)
+        mock_voices_resp.json.return_value = {
+            "count": 2,
+            "voices": [{"voice_id": "voice_fi"}, {"voice_id": "matti_speaker"}],
+        }
+        mock_voices_resp.raise_for_status = unittest.mock.MagicMock()
+        mock_client.get.return_value = mock_voices_resp
+
+        mock_tts_resp = unittest.mock.MagicMock(spec=httpx.Response)
+        mock_tts_resp.content = b"audio-bytes"
+        mock_tts_resp.raise_for_status = unittest.mock.MagicMock()
+        mock_client.post.return_value = mock_tts_resp
+
+        audio = await synthesize_speech(
+            base_url="http://localhost:8080",
+            text="Terve maailma!",
+            voice="matti",
+            client=mock_client,
+        )
+
+        self.assertEqual(audio, b"audio-bytes")
+        call_args = mock_client.post.call_args
+        self.assertEqual(call_args.kwargs["json"]["voice"], "matti_speaker")
+
 
     async def test_synthesize_speech_openai(self) -> None:
         from bot.commands.tts_logic import synthesize_speech_openai

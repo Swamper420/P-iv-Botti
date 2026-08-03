@@ -3,4 +3,6 @@ numpy
 Pillow
 ultralytics
 websockets
+rapidfuzz
+
 

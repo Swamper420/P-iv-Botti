@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import subprocess
 import tempfile
@@ -8,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+LOGGER = logging.getLogger(__name__)
+
 
 
 def parse_tts_command(text: str) -> tuple[bool, str | None, str]:
@@ -199,6 +203,57 @@ async def combine_audio_chunks(
         return output_file.read_bytes()
 
 
+def extract_voice_ids(data: dict[str, Any]) -> list[str]:
+    """Extract list of voice_id strings from GET /api/v1/voices response."""
+    voices_raw = data.get("voices", [])
+    if not isinstance(voices_raw, list):
+        return []
+    voice_ids: list[str] = []
+    for item in voices_raw:
+        if isinstance(item, dict) and "voice_id" in item:
+            voice_ids.append(str(item["voice_id"]))
+        elif isinstance(item, str):
+            voice_ids.append(item)
+    return voice_ids
+
+
+def resolve_voice(
+    requested_voice: str | None,
+    available_voices: list[str],
+) -> str | None:
+    """Find nearest matching voice ID from available_voices using rapidfuzz.
+
+    If requested_voice is None or available_voices is empty, returns requested_voice.
+    If exact case-insensitive match exists, returns that exact voice ID.
+    Otherwise, uses rapidfuzz to find the closest matching voice ID.
+    """
+    if not requested_voice or not available_voices:
+        return requested_voice
+
+    req_clean = requested_voice.strip()
+    if not req_clean:
+        return requested_voice
+
+    req_lower = req_clean.lower()
+    for v in available_voices:
+        if v.lower() == req_lower:
+            return v
+
+    try:
+        from rapidfuzz import fuzz, process
+
+        match = process.extractOne(req_clean, available_voices, scorer=fuzz.WRatio)
+        if match:
+            best_voice = match[0]
+            return str(best_voice)
+    except Exception as err:
+        LOGGER.warning(
+            "RapidFuzz matching failed for voice '%s': %s", requested_voice, err
+        )
+
+    return requested_voice
+
+
 async def synthesize_speech(
     base_url: str,
     text: str,
@@ -214,8 +269,9 @@ async def synthesize_speech(
     max_chunk_size: int = 50,
     min_chunk_len: int = 10,
     client: httpx.AsyncClient | None = None,
+    available_voices: list[str] | None = None,
 ) -> bytes:
-    """Synthesize speech using custom TTS API (/api/v1/tts) with chunking and audio concatenation."""
+    """Synthesize speech using custom TTS API (/api/v1/tts) with chunking and rapidfuzz voice resolution."""
     chunks = chunk_text(text, max_chunk_size=max_chunk_size, min_chunk_len=min_chunk_len)
     if not chunks:
         return b""
@@ -226,6 +282,20 @@ async def synthesize_speech(
         close_client = True
 
     try:
+        resolved_voice = voice
+        if voice:
+            if available_voices is None:
+                try:
+                    voices_data = await list_voices(
+                        base_url, timeout_seconds=timeout_seconds, client=client
+                    )
+                    available_voices = extract_voice_ids(voices_data)
+                except Exception as err:
+                    LOGGER.warning("Could not fetch voice catalog for fuzzy matching: %s", err)
+                    available_voices = []
+
+            resolved_voice = resolve_voice(voice, available_voices)
+
         audio_chunks: list[bytes] = []
         target_url = f"{base_url.rstrip('/')}/api/v1/tts"
         for chunk in chunks:
@@ -233,8 +303,8 @@ async def synthesize_speech(
                 "text": chunk,
                 "response_format": fmt,
             }
-            if voice:
-                payload["voice"] = voice
+            if resolved_voice:
+                payload["voice"] = resolved_voice
             if language:
                 payload["language"] = language
             if speed is not None:
