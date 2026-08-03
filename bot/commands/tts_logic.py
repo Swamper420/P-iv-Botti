@@ -48,6 +48,13 @@ def parse_tts_command(text: str) -> tuple[bool, str | None, str]:
     return True, voice, prompt_text
 
 
+def is_voices_command(text: str) -> bool:
+    """Check if the input text is a command to list available voices (e.g., !äänet or !aanet)."""
+    if not text:
+        return False
+    return bool(re.match(r"(?i)^\s*!(?:äänet|aanet)\b", text))
+
+
 def extract_voice_ids(data: dict[str, Any]) -> list[str]:
     """Extract list of voice_id strings from GET /api/v1/voices response."""
     voices_raw = data.get("voices", [])
@@ -55,11 +62,24 @@ def extract_voice_ids(data: dict[str, Any]) -> list[str]:
         return []
     voice_ids: list[str] = []
     for item in voices_raw:
-        if isinstance(item, dict) and "voice_id" in item:
-            voice_ids.append(str(item["voice_id"]))
+        if isinstance(item, dict):
+            if "voice_id" in item:
+                voice_ids.append(str(item["voice_id"]))
+            elif "id" in item:
+                voice_ids.append(str(item["id"]))
+            elif "name" in item:
+                voice_ids.append(str(item["name"]))
         elif isinstance(item, str):
             voice_ids.append(item)
     return voice_ids
+
+
+def format_voices_list(voice_ids: list[str]) -> str:
+    """Format a list of voice IDs into a human-readable response string."""
+    if not voice_ids:
+        return "Ei ääniä saatavilla."
+    voices_str = "\n".join(f"- {v}" for v in voice_ids)
+    return f"Saatavilla olevat äänet:\n{voices_str}"
 
 
 def resolve_voice(

@@ -444,7 +444,105 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(len(ogg_bytes) > 0)
         self.assertTrue(ogg_bytes.startswith(b"OggS"))
 
+    def test_is_voices_command(self) -> None:
+        from bot.commands.tts_logic import is_voices_command
+
+        self.assertTrue(is_voices_command("!äänet"))
+        self.assertTrue(is_voices_command("!aanet"))
+        self.assertTrue(is_voices_command("  !ÄÄNET  "))
+        self.assertTrue(is_voices_command("!äänet: extra"))
+        self.assertFalse(is_voices_command("puhuu: Terve"))
+        self.assertFalse(is_voices_command("äänet"))
+        self.assertFalse(is_voices_command(""))
+
+    def test_format_voices_list(self) -> None:
+        from bot.commands.tts_logic import format_voices_list
+
+        self.assertEqual(
+            format_voices_list(["Matti", "Sanna"]),
+            "Saatavilla olevat äänet:\n- Matti\n- Sanna",
+        )
+        self.assertEqual(format_voices_list([]), "Ei ääniä saatavilla.")
+
+    def test_extract_voice_ids_fallback(self) -> None:
+        from bot.commands.tts_logic import extract_voice_ids
+
+        data = {
+            "voices": [
+                {"voice_id": "v1"},
+                {"id": "v2"},
+                {"name": "v3"},
+                "v4",
+            ]
+        }
+        self.assertEqual(extract_voice_ids(data), ["v1", "v2", "v3", "v4"])
+
+    async def test_handle_tts_voices_command_success(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from bot.commands.tts import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        update.effective_message.text = "!äänet"
+        update.effective_chat.id = 1234
+        context = MagicMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+             patch("bot.commands.tts.list_voices", return_value={"voices": [{"voice_id": "Matti"}, {"voice_id": "Sanna"}]}), \
+             patch("bot.commands.tts.reply_in_chunks") as mock_reply:
+            await handler(update, context)
+            mock_reply.assert_called_once_with(
+                update,
+                "Saatavilla olevat äänet:\n- Matti\n- Sanna",
+                5000,
+            )
+
+    async def test_handle_tts_voices_command_error(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from bot.commands.tts import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        update.effective_message.text = "!äänet"
+        update.effective_chat.id = 1234
+        context = MagicMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+             patch("bot.commands.tts.list_voices", side_effect=RuntimeError("Network error")), \
+             patch("bot.commands.tts.reply_in_chunks") as mock_reply:
+            await handler(update, context)
+            mock_reply.assert_called_once_with(
+                update,
+                "Virhe haettaessa ääniä.",
+                5000,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

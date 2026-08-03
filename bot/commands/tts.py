@@ -11,6 +11,10 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.tts_logic import (
+    extract_voice_ids,
+    format_voices_list,
+    is_voices_command,
+    list_voices,
     parse_tts_command,
     reencode_audio_for_telegram,
     synthesize_speech,
@@ -19,7 +23,7 @@ from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
 
-COMMAND_USAGE = "*ääni* puhuu: <teksti> | puhuu: <teksti> | *ääni* puhuu selkeästi: <teksti>"
+COMMAND_USAGE = "*ääni* puhuu: <teksti> | puhuu: <teksti> | *ääni* puhuu selkeästi: <teksti> | !äänet"
 
 
 def _build_handler(
@@ -29,6 +33,20 @@ def _build_handler(
     async def handle_tts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if message is None or not message.text:
+            return
+
+        if is_voices_command(message.text):
+            try:
+                voices_data = await list_voices(
+                    base_url=config.tts.base_url,
+                    timeout_seconds=config.tts.timeout_seconds,
+                )
+                voice_ids = extract_voice_ids(voices_data)
+                response_text = format_voices_list(voice_ids)
+            except Exception:
+                LOGGER.exception("Error fetching available voices")
+                response_text = "Virhe haettaessa ääniä."
+            await reply_in_chunks(update, response_text, config.max_reply_length)
             return
 
         is_match, voice, text = parse_tts_command(message.text)
@@ -91,7 +109,9 @@ def _build_handler(
 def register(application: Application, config: BotConfig) -> None:
     application.add_handler(
         MessageHandler(
-            filters.Regex(r"(?i)^\s*!?(?:[^\n:]+\s+)?puhuu(?:\s+selkeästi)?:"),
+            filters.Regex(
+                r"(?i)^\s*(?:!?(?:[^\n:]+\s+)?puhuu(?:\s+selkeästi)?:|!(?:äänet|aanet)\b)"
+            ),
             _build_handler(config),
         )
     )
