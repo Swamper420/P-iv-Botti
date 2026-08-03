@@ -100,8 +100,6 @@ class TtsConfig:
     timeout_seconds: int = 60
     format: str = "ogg"
     error_message: str = "Virhe puheen synteesissä."
-    max_chunk_size: int = 50
-    min_chunk_len: int = 10
     language: str = "fi"
     speed: float = 1.0
     num_step: int = 32
@@ -244,14 +242,6 @@ class BotConfig:
     @property
     def tts_error_message(self) -> str:
         return self.tts.error_message
-
-    @property
-    def tts_max_chunk_size(self) -> int:
-        return self.tts.max_chunk_size
-
-    @property
-    def tts_min_chunk_len(self) -> int:
-        return self.tts.min_chunk_len
 
     @property
     def tts_language(self) -> str:
@@ -423,8 +413,6 @@ class BotConfig:
             error_message=os.getenv(
                 "TTS_ERROR_MESSAGE", "Virhe puheen synteesissä."
             ).strip(),
-            max_chunk_size=int(os.getenv("TTS_MAX_CHUNK_SIZE", "50")),
-            min_chunk_len=int(os.getenv("TTS_MIN_CHUNK_LEN", "10")),
             language=os.getenv("TTS_LANGUAGE", "fi").strip(),
             speed=float(os.getenv("TTS_SPEED", "1.0")),
             num_step=int(os.getenv("TTS_NUM_STEP", "32")),

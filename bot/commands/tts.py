@@ -55,8 +55,6 @@ def _build_handler(
                 num_step=config.tts.num_step,
                 guidance_scale=config.tts.guidance_scale,
                 timeout_seconds=config.tts.timeout_seconds,
-                max_chunk_size=config.tts.max_chunk_size,
-                min_chunk_len=config.tts.min_chunk_len,
             )
             if not audio_bytes:
                 LOGGER.error("TTS synthesis returned empty audio bytes.")
