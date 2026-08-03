@@ -204,13 +204,18 @@ async def synthesize_speech(
     text: str,
     voice: str | None = None,
     fmt: str = "ogg",
+    language: str | None = None,
+    speed: float | None = None,
+    num_step: int | None = None,
+    guidance_scale: float | None = None,
+    seed: int | None = None,
     model: str | None = None,
     timeout_seconds: int = 60,
     max_chunk_size: int = 50,
     min_chunk_len: int = 10,
     client: httpx.AsyncClient | None = None,
 ) -> bytes:
-    """Synthesize speech using Chatterbox TTS API with chunking and audio concatenation."""
+    """Synthesize speech using custom TTS API (/api/v1/tts) with chunking and audio concatenation."""
     chunks = chunk_text(text, max_chunk_size=max_chunk_size, min_chunk_len=min_chunk_len)
     if not chunks:
         return b""
@@ -222,16 +227,24 @@ async def synthesize_speech(
 
     try:
         audio_chunks: list[bytes] = []
-        target_url = f"{base_url.rstrip('/')}/api/tts"
+        target_url = f"{base_url.rstrip('/')}/api/v1/tts"
         for chunk in chunks:
             payload: dict[str, Any] = {
                 "text": chunk,
-                "format": fmt,
+                "response_format": fmt,
             }
             if voice:
                 payload["voice"] = voice
-            if model:
-                payload["model"] = model
+            if language:
+                payload["language"] = language
+            if speed is not None:
+                payload["speed"] = speed
+            if num_step is not None:
+                payload["num_step"] = num_step
+            if guidance_scale is not None:
+                payload["guidance_scale"] = guidance_scale
+            if seed is not None:
+                payload["seed"] = seed
 
             response = await client.post(target_url, json=payload)
             response.raise_for_status()
@@ -241,3 +254,102 @@ async def synthesize_speech(
     finally:
         if close_client:
             await client.aclose()
+
+
+async def synthesize_speech_openai(
+    base_url: str,
+    input_text: str,
+    voice: str = "voice_fi",
+    model: str = "omnivoice",
+    response_format: str = "mp3",
+    speed: float | None = None,
+    timeout_seconds: int = 60,
+    client: httpx.AsyncClient | None = None,
+) -> bytes:
+    """Synthesize speech using OpenAI compatible endpoint (/v1/audio/speech)."""
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=timeout_seconds)
+        close_client = True
+
+    try:
+        target_url = f"{base_url.rstrip('/')}/v1/audio/speech"
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": input_text,
+            "voice": voice,
+            "response_format": response_format,
+        }
+        if speed is not None:
+            payload["speed"] = speed
+
+        response = await client.post(target_url, json=payload)
+        response.raise_for_status()
+        return response.content
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+async def list_voices(
+    base_url: str,
+    timeout_seconds: int = 60,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
+    """Fetch voice catalog from TTS API (/api/v1/voices)."""
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=timeout_seconds)
+        close_client = True
+
+    try:
+        target_url = f"{base_url.rstrip('/')}/api/v1/voices"
+        response = await client.get(target_url)
+        response.raise_for_status()
+        return response.json()
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+async def reload_voices(
+    base_url: str,
+    timeout_seconds: int = 60,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
+    """Reload voice catalog on TTS API (/api/v1/voices/reload)."""
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=timeout_seconds)
+        close_client = True
+
+    try:
+        target_url = f"{base_url.rstrip('/')}/api/v1/voices/reload"
+        response = await client.post(target_url)
+        response.raise_for_status()
+        return response.json() if response.content else {}
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+async def check_health(
+    base_url: str,
+    timeout_seconds: int = 60,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
+    """Check health status of TTS API (/health)."""
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=timeout_seconds)
+        close_client = True
+
+    try:
+        target_url = f"{base_url.rstrip('/')}/health"
+        response = await client.get(target_url)
+        response.raise_for_status()
+        return response.json()
+    finally:
+        if close_client:
+            await client.aclose()
+

@@ -31,6 +31,10 @@ class ConfigTests(unittest.TestCase):
                 "TTS_TIMEOUT_SECONDS": "45",
                 "TTS_FORMAT": "ogg",
                 "TTS_ERROR_MESSAGE": "Kustomoitu virhe",
+                "TTS_LANGUAGE": "en",
+                "TTS_SPEED": "1.2",
+                "TTS_NUM_STEP": "24",
+                "TTS_GUIDANCE_SCALE": "2.5",
                 "TELKKARI_EPG_URL": "https://example.com/epg.xml",
                 "TELKKARI_DEFAULT_CHANNELS": "1,2,3",
                 "TELKKARI_CACHE_TIMEOUT_SECONDS": "600",
@@ -60,6 +64,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tts.timeout_seconds, 45)
         self.assertEqual(config.tts.format, "ogg")
         self.assertEqual(config.tts.error_message, "Kustomoitu virhe")
+        self.assertEqual(config.tts.language, "en")
+        self.assertEqual(config.tts.speed, 1.2)
+        self.assertEqual(config.tts.num_step, 24)
+        self.assertEqual(config.tts.guidance_scale, 2.5)
         self.assertEqual(config.telkkari.epg_url, "https://example.com/epg.xml")
         self.assertEqual(config.telkkari.default_channels, (1, 2, 3))
         self.assertEqual(config.telkkari.cache_timeout_seconds, 600)
@@ -87,6 +95,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tts_timeout_seconds, 45)
         self.assertEqual(config.tts_format, "ogg")
         self.assertEqual(config.tts_error_message, "Kustomoitu virhe")
+        self.assertEqual(config.tts_language, "en")
+        self.assertEqual(config.tts_speed, 1.2)
+        self.assertEqual(config.tts_num_step, 24)
+        self.assertEqual(config.tts_guidance_scale, 2.5)
 
 
 

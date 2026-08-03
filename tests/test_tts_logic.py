@@ -125,6 +125,11 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
                 text=text,
                 voice="Matti",
                 fmt="ogg",
+                language="fi",
+                speed=1.0,
+                num_step=32,
+                guidance_scale=2.0,
+                seed=42,
                 timeout_seconds=30,
                 max_chunk_size=40,
                 min_chunk_len=10,
@@ -133,9 +138,98 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(audio, b"combined-audio")
         self.assertEqual(mock_client.post.call_count, 2)
+        call_args = mock_client.post.call_args_list[0]
+        self.assertEqual(call_args.args[0], "http://localhost:8080/api/v1/tts")
+        self.assertEqual(
+            call_args.kwargs["json"],
+            {
+                "text": "Ensimmäinen lause, joka on pitkä.",
+                "voice": "Matti",
+                "response_format": "ogg",
+                "language": "fi",
+                "speed": 1.0,
+                "num_step": 32,
+                "guidance_scale": 2.0,
+                "seed": 42,
+            },
+        )
         mock_combine.assert_called_once_with(
             [b"chunk1-bytes", b"chunk2-bytes"], fmt="ogg"
         )
+
+    async def test_synthesize_speech_openai(self) -> None:
+        from bot.commands.tts_logic import synthesize_speech_openai
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.content = b"mp3-bytes"
+        mock_response.raise_for_status = unittest.mock.MagicMock()
+        mock_client.post.return_value = mock_response
+
+        audio = await synthesize_speech_openai(
+            base_url="http://localhost:8080",
+            input_text="Hello world",
+            voice="voice_fi",
+            model="omnivoice",
+            response_format="mp3",
+            speed=1.0,
+            client=mock_client,
+        )
+
+        self.assertEqual(audio, b"mp3-bytes")
+        mock_client.post.assert_called_once_with(
+            "http://localhost:8080/v1/audio/speech",
+            json={
+                "model": "omnivoice",
+                "input": "Hello world",
+                "voice": "voice_fi",
+                "response_format": "mp3",
+                "speed": 1.0,
+            },
+        )
+
+    async def test_list_voices(self) -> None:
+        from bot.commands.tts_logic import list_voices
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.json.return_value = {"count": 1, "voices": []}
+        mock_response.raise_for_status = unittest.mock.MagicMock()
+        mock_client.get.return_value = mock_response
+
+        result = await list_voices("http://localhost:8080", client=mock_client)
+        self.assertEqual(result, {"count": 1, "voices": []})
+        mock_client.get.assert_called_once_with("http://localhost:8080/api/v1/voices")
+
+    async def test_reload_voices(self) -> None:
+        from bot.commands.tts_logic import reload_voices
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.content = b'{"status": "reloaded"}'
+        mock_response.json.return_value = {"status": "reloaded"}
+        mock_response.raise_for_status = unittest.mock.MagicMock()
+        mock_client.post.return_value = mock_response
+
+        result = await reload_voices("http://localhost:8080", client=mock_client)
+        self.assertEqual(result, {"status": "reloaded"})
+        mock_client.post.assert_called_once_with(
+            "http://localhost:8080/api/v1/voices/reload"
+        )
+
+    async def test_check_health(self) -> None:
+        from bot.commands.tts_logic import check_health
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.json.return_value = {"status": "ok", "model_loaded": True}
+        mock_response.raise_for_status = unittest.mock.MagicMock()
+        mock_client.get.return_value = mock_response
+
+        result = await check_health("http://localhost:8080", client=mock_client)
+        self.assertEqual(result, {"status": "ok", "model_loaded": True})
+        mock_client.get.assert_called_once_with("http://localhost:8080/health")
+
 
     async def test_handle_tts_error_response_on_exception(self) -> None:
         from pathlib import Path

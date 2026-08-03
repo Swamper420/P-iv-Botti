@@ -102,6 +102,11 @@ class TtsConfig:
     error_message: str = "Virhe puheen synteesissä."
     max_chunk_size: int = 50
     min_chunk_len: int = 10
+    language: str = "fi"
+    speed: float = 1.0
+    num_step: int = 32
+    guidance_scale: float = 2.0
+
 
 
 
@@ -247,6 +252,23 @@ class BotConfig:
     @property
     def tts_min_chunk_len(self) -> int:
         return self.tts.min_chunk_len
+
+    @property
+    def tts_language(self) -> str:
+        return self.tts.language
+
+    @property
+    def tts_speed(self) -> float:
+        return self.tts.speed
+
+    @property
+    def tts_num_step(self) -> int:
+        return self.tts.num_step
+
+    @property
+    def tts_guidance_scale(self) -> float:
+        return self.tts.guidance_scale
+
 
     @classmethod
 
@@ -403,6 +425,10 @@ class BotConfig:
             ).strip(),
             max_chunk_size=int(os.getenv("TTS_MAX_CHUNK_SIZE", "50")),
             min_chunk_len=int(os.getenv("TTS_MIN_CHUNK_LEN", "10")),
+            language=os.getenv("TTS_LANGUAGE", "fi").strip(),
+            speed=float(os.getenv("TTS_SPEED", "1.0")),
+            num_step=int(os.getenv("TTS_NUM_STEP", "32")),
+            guidance_scale=float(os.getenv("TTS_GUIDANCE_SCALE", "2.0")),
         )
 
         raw_telkkari_channels = os.getenv(
