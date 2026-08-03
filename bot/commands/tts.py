@@ -10,7 +10,11 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
-from bot.commands.tts_logic import parse_tts_command, synthesize_speech
+from bot.commands.tts_logic import (
+    parse_tts_command,
+    reencode_audio_for_telegram,
+    synthesize_speech,
+)
 from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -62,6 +66,16 @@ def _build_handler(
                     update, config.tts.error_message, config.max_reply_length
                 )
                 return
+
+            if config.tts.reencode_audio:
+                audio_bytes = await reencode_audio_for_telegram(
+                    audio_bytes,
+                    ffmpeg_path=config.tts.ffmpeg_path,
+                    sample_rate=config.tts.audio_sample_rate,
+                    channels=config.tts.audio_channels,
+                    bitrate=config.tts.audio_bitrate,
+                    timeout_seconds=config.tts.timeout_seconds,
+                )
 
             voice_file = InputFile(BytesIO(audio_bytes), filename="speech.ogg")
             await message.reply_voice(voice=voice_file)

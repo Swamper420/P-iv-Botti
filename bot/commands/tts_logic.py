@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -259,4 +260,69 @@ async def check_health(
     finally:
         if close_client:
             await client.aclose()
+
+
+async def reencode_audio_for_telegram(
+    audio_bytes: bytes,
+    ffmpeg_path: str = "ffmpeg",
+    sample_rate: int = 48000,
+    channels: int = 1,
+    bitrate: str = "32k",
+    timeout_seconds: int = 30,
+) -> bytes:
+    """Re-encode raw audio bytes to Telegram voice-compatible OGG Opus format using ffmpeg.
+
+    Telegram requires OGG Opus audio with 48kHz sampling rate and mono channel to create waveforms
+    and guarantee playback on iOS devices.
+    """
+    if not audio_bytes:
+        return b""
+
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-i",
+        "pipe:0",
+        "-c:a",
+        "libopus",
+        "-b:a",
+        bitrate,
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        str(channels),
+        "-f",
+        "ogg",
+        "pipe:1",
+    ]
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as err:
+        LOGGER.error("Failed to start ffmpeg subprocess for audio re-encoding: %s", err)
+        raise RuntimeError(f"Failed to start ffmpeg: {err}") from err
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(input=audio_bytes),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError as err:
+        process.kill()
+        await process.wait()
+        LOGGER.error("ffmpeg audio re-encoding timed out after %d seconds", timeout_seconds)
+        raise RuntimeError("ffmpeg re-encoding timed out") from err
+
+    if process.returncode != 0:
+        err_msg = stderr.decode(errors="replace").strip()
+        LOGGER.error("ffmpeg audio re-encoding failed with exit code %d: %s", process.returncode, err_msg)
+        raise RuntimeError(f"ffmpeg re-encoding failed (exit code {process.returncode})")
+
+    return stdout
+
 

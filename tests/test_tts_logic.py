@@ -309,6 +309,142 @@ class TtsLogicTests(unittest.IsolatedAsyncioTestCase):
             await handler(update, context)
             mock_reply.assert_called_once_with(update, "Testivirhe viesti", 5000)
 
+    async def test_reencode_audio_for_telegram_empty(self) -> None:
+        from bot.commands.tts_logic import reencode_audio_for_telegram
+
+        result = await reencode_audio_for_telegram(b"")
+        self.assertEqual(result, b"")
+
+    async def test_reencode_audio_for_telegram_success(self) -> None:
+        import asyncio
+        from bot.commands.tts_logic import reencode_audio_for_telegram
+
+        mock_process = AsyncMock()
+        mock_process.communicate.return_value = (b"opus-encoded-ogg", b"")
+        mock_process.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_exec:
+            out = await reencode_audio_for_telegram(
+                b"raw-pcm-bytes",
+                ffmpeg_path="ffmpeg",
+                sample_rate=48000,
+                channels=1,
+                bitrate="32k",
+                timeout_seconds=10,
+            )
+            self.assertEqual(out, b"opus-encoded-ogg")
+            mock_exec.assert_called_once_with(
+                "ffmpeg",
+                "-y",
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                "32k",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
+                "-f",
+                "ogg",
+                "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            mock_process.communicate.assert_called_once_with(input=b"raw-pcm-bytes")
+
+    async def test_reencode_audio_for_telegram_failure(self) -> None:
+        from bot.commands.tts_logic import reencode_audio_for_telegram
+
+        mock_process = AsyncMock()
+        mock_process.communicate.return_value = (b"", b"Encoder error")
+        mock_process.returncode = 1
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            with self.assertRaises(RuntimeError) as ctx:
+                await reencode_audio_for_telegram(b"bad-data")
+            self.assertIn("ffmpeg re-encoding failed", str(ctx.exception))
+
+    async def test_reencode_audio_for_telegram_timeout(self) -> None:
+        import asyncio
+        from unittest.mock import MagicMock
+        from bot.commands.tts_logic import reencode_audio_for_telegram
+
+        mock_process = AsyncMock()
+        mock_process.kill = MagicMock()
+        mock_process.communicate.side_effect = asyncio.TimeoutError()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            with self.assertRaises(RuntimeError) as ctx:
+                await reencode_audio_for_telegram(b"data", timeout_seconds=1)
+            self.assertIn("timed out", str(ctx.exception))
+            mock_process.kill.assert_called_once()
+
+    async def test_handle_tts_reencodes_audio_success(self) -> None:
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from bot.commands.tts import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(reencode_audio=True),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        update.effective_message.text = "puhuu: Testi"
+        update.effective_message.reply_voice = AsyncMock()
+        update.effective_chat.id = 1234
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+             patch("bot.commands.tts.synthesize_speech", return_value=b"raw-audio"), \
+             patch("bot.commands.tts.reencode_audio_for_telegram", return_value=b"reencoded-audio") as mock_reencode:
+            await handler(update, context)
+            mock_reencode.assert_called_once_with(
+                b"raw-audio",
+                ffmpeg_path="ffmpeg",
+                sample_rate=48000,
+                channels=1,
+                bitrate="32k",
+                timeout_seconds=60,
+            )
+            update.effective_message.reply_voice.assert_called_once()
+
+    async def test_reencode_audio_real_ffmpeg(self) -> None:
+        import io
+        import wave
+        from bot.commands.tts_logic import reencode_audio_for_telegram
+
+        wav_io = io.BytesIO()
+        with wave.open(wav_io, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x00\x00" * 8000)
+        wav_bytes = wav_io.getvalue()
+
+        ogg_bytes = await reencode_audio_for_telegram(
+            wav_bytes,
+            ffmpeg_path="ffmpeg",
+            sample_rate=48000,
+            channels=1,
+            bitrate="32k",
+            timeout_seconds=10,
+        )
+        self.assertTrue(len(ogg_bytes) > 0)
+        self.assertTrue(ogg_bytes.startswith(b"OggS"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

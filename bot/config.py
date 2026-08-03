@@ -104,6 +104,11 @@ class TtsConfig:
     speed: float = 1.0
     num_step: int = 32
     guidance_scale: float = 2.0
+    reencode_audio: bool = True
+    ffmpeg_path: str = "ffmpeg"
+    audio_sample_rate: int = 48000
+    audio_channels: int = 1
+    audio_bitrate: str = "32k"
 
 
 
@@ -258,6 +263,26 @@ class BotConfig:
     @property
     def tts_guidance_scale(self) -> float:
         return self.tts.guidance_scale
+
+    @property
+    def tts_reencode_audio(self) -> bool:
+        return self.tts.reencode_audio
+
+    @property
+    def tts_ffmpeg_path(self) -> str:
+        return self.tts.ffmpeg_path
+
+    @property
+    def tts_audio_sample_rate(self) -> int:
+        return self.tts.audio_sample_rate
+
+    @property
+    def tts_audio_channels(self) -> int:
+        return self.tts.audio_channels
+
+    @property
+    def tts_audio_bitrate(self) -> str:
+        return self.tts.audio_bitrate
 
 
     @classmethod
@@ -417,6 +442,13 @@ class BotConfig:
             speed=float(os.getenv("TTS_SPEED", "1.0")),
             num_step=int(os.getenv("TTS_NUM_STEP", "32")),
             guidance_scale=float(os.getenv("TTS_GUIDANCE_SCALE", "2.0")),
+            reencode_audio=(
+                os.getenv("TTS_REENCODE_AUDIO", "true").strip().lower() == "true"
+            ),
+            ffmpeg_path=os.getenv("TTS_FFMPEG_PATH", "ffmpeg").strip(),
+            audio_sample_rate=int(os.getenv("TTS_AUDIO_SAMPLE_RATE", "48000")),
+            audio_channels=int(os.getenv("TTS_AUDIO_CHANNELS", "1")),
+            audio_bitrate=os.getenv("TTS_AUDIO_BITRATE", "32k").strip(),
         )
 
         raw_telkkari_channels = os.getenv(
