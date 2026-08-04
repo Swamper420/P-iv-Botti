@@ -50,15 +50,11 @@ class NaamaConfig:
 @dataclass(frozen=True)
 class OllamaConfig:
     base_url: str = "http://localhost:11434"
-    model: str = "llama3.2"
+    model: str = "gemma3"
     default_num_predict: int = 100
     max_num_predict: int = 2000
     timeout_seconds: int = 120
-    strip_thinking: bool = True
-    system_prompt: str = (
-        "Do not include internal thinking processes, reasoning steps, or <think> tags. "
-        "Answer directly and concisely."
-    )
+    system_prompt: str = "Vastaa aina suomeksi suoraan ja tiiviisti."
 
 
 
@@ -224,10 +220,6 @@ class BotConfig:
         return self.ollama.timeout_seconds
 
     @property
-    def ollama_strip_thinking(self) -> bool:
-        return self.ollama.strip_thinking
-
-    @property
     def ollama_system_prompt(self) -> str:
         return self.ollama.system_prompt
 
@@ -366,13 +358,7 @@ class BotConfig:
         )
         if ollama_timeout_seconds < 1:
             raise ValueError("OLLAMA_TIMEOUT_SECONDS must be >= 1")
-        ollama_strip_thinking = (
-            os.getenv("OLLAMA_STRIP_THINKING", "true").strip().lower() == "true"
-        )
-        default_system = (
-            "Do not include internal thinking processes, reasoning steps, or <think> tags. "
-            "Answer directly and concisely."
-        )
+        default_system = "Vastaa aina suomeksi suoraan ja tiiviisti."
         ollama_system_prompt = os.getenv("OLLAMA_SYSTEM_PROMPT", default_system).strip()
 
         weather_config = WeatherConfig(
@@ -415,11 +401,10 @@ class BotConfig:
 
         ollama_config = OllamaConfig(
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip(),
-            model=os.getenv("OLLAMA_MODEL", "llama3.2").strip(),
+            model=os.getenv("OLLAMA_MODEL", "gemma3").strip(),
             default_num_predict=ollama_default_num_predict,
             max_num_predict=ollama_max_num_predict,
             timeout_seconds=ollama_timeout_seconds,
-            strip_thinking=ollama_strip_thinking,
             system_prompt=ollama_system_prompt,
         )
 

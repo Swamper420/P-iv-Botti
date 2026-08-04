@@ -26,7 +26,6 @@ class ConfigTests(unittest.TestCase):
                 "OLLAMA_DEFAULT_NUM_PREDICT": "150",
                 "OLLAMA_MAX_NUM_PREDICT": "1500",
                 "OLLAMA_TIMEOUT_SECONDS": "60",
-                "OLLAMA_STRIP_THINKING": "true",
                 "TTS_BASE_URL": "http://tts.example:8080",
                 "TTS_TIMEOUT_SECONDS": "45",
                 "TTS_FORMAT": "ogg",
@@ -65,7 +64,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama.default_num_predict, 150)
         self.assertEqual(config.ollama.max_num_predict, 1500)
         self.assertEqual(config.ollama.timeout_seconds, 60)
-        self.assertTrue(config.ollama.strip_thinking)
         self.assertEqual(config.tts.base_url, "http://tts.example:8080")
         self.assertEqual(config.tts.timeout_seconds, 45)
         self.assertEqual(config.tts.format, "ogg")
@@ -102,7 +100,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_default_num_predict, 150)
         self.assertEqual(config.ollama_max_num_predict, 1500)
         self.assertEqual(config.ollama_timeout_seconds, 60)
-        self.assertTrue(config.ollama_strip_thinking)
         self.assertEqual(config.tts_base_url, "http://tts.example:8080")
         self.assertEqual(config.tts_timeout_seconds, 45)
         self.assertEqual(config.tts_format, "ogg")
@@ -134,6 +131,14 @@ class ConfigTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 BotConfig.from_environment()
+
+    def test_ollama_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch.dict(os.environ, env, clear=True):
+            config = BotConfig.from_environment()
+
+        self.assertEqual(config.ollama.model, "gemma3")
+        self.assertIn("suomeksi", config.ollama.system_prompt)
 
 
 if __name__ == "__main__":
