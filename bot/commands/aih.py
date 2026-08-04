@@ -52,6 +52,7 @@ def _build_handler(
                 model=config.ollama.model,
                 prompt=prompt,
                 num_predict=num_predict,
+                num_ctx=config.ollama.num_ctx,
                 timeout_seconds=config.ollama.timeout_seconds,
                 system_prompt=config.ollama.system_prompt,
             ):

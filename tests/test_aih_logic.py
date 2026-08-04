@@ -89,7 +89,7 @@ class AihLogicTests(unittest.IsolatedAsyncioTestCase):
                 "model": "gemma3",
                 "prompt": "Hei",
                 "stream": True,
-                "options": {"num_predict": 100},
+                "options": {"num_predict": 100, "num_ctx": 2048},
                 "system": "Vastaa aina suomeksi suoraan ja tiiviisti.",
             },
         )

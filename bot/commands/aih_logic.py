@@ -50,6 +50,7 @@ async def stream_ollama_completion(
     model: str,
     prompt: str,
     num_predict: int,
+    num_ctx: int = 2048,
     timeout_seconds: int = 120,
     system_prompt: str | None = None,
     client: httpx.AsyncClient | None = None,
@@ -62,6 +63,7 @@ async def stream_ollama_completion(
         "stream": True,
         "options": {
             "num_predict": num_predict,
+            "num_ctx": num_ctx,
         },
     }
 

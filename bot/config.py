@@ -53,6 +53,7 @@ class OllamaConfig:
     model: str = "gemma3"
     default_num_predict: int = 100
     max_num_predict: int = 2000
+    num_ctx: int = 2048
     timeout_seconds: int = 120
     system_prompt: str = "Vastaa aina suomeksi suoraan ja tiiviisti."
 
@@ -216,6 +217,10 @@ class BotConfig:
         return self.ollama.max_num_predict
 
     @property
+    def ollama_num_ctx(self) -> int:
+        return self.ollama.num_ctx
+
+    @property
     def ollama_timeout_seconds(self) -> int:
         return self.ollama.timeout_seconds
 
@@ -353,6 +358,9 @@ class BotConfig:
         )
         if ollama_max_num_predict < 1:
             raise ValueError("OLLAMA_MAX_NUM_PREDICT must be >= 1")
+        ollama_num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "2048"))
+        if ollama_num_ctx < 1:
+            raise ValueError("OLLAMA_NUM_CTX must be >= 1")
         ollama_timeout_seconds = int(
             os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")
         )
@@ -404,6 +412,7 @@ class BotConfig:
             model=os.getenv("OLLAMA_MODEL", "gemma3").strip(),
             default_num_predict=ollama_default_num_predict,
             max_num_predict=ollama_max_num_predict,
+            num_ctx=ollama_num_ctx,
             timeout_seconds=ollama_timeout_seconds,
             system_prompt=ollama_system_prompt,
         )

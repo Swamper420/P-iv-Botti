@@ -25,6 +25,7 @@ class ConfigTests(unittest.TestCase):
                 "OLLAMA_MODEL": "qwen2.5",
                 "OLLAMA_DEFAULT_NUM_PREDICT": "150",
                 "OLLAMA_MAX_NUM_PREDICT": "1500",
+                "OLLAMA_NUM_CTX": "4096",
                 "OLLAMA_TIMEOUT_SECONDS": "60",
                 "TTS_BASE_URL": "http://tts.example:8080",
                 "TTS_TIMEOUT_SECONDS": "45",
@@ -63,6 +64,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama.model, "qwen2.5")
         self.assertEqual(config.ollama.default_num_predict, 150)
         self.assertEqual(config.ollama.max_num_predict, 1500)
+        self.assertEqual(config.ollama.num_ctx, 4096)
         self.assertEqual(config.ollama.timeout_seconds, 60)
         self.assertEqual(config.tts.base_url, "http://tts.example:8080")
         self.assertEqual(config.tts.timeout_seconds, 45)
@@ -99,6 +101,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ollama_model, "qwen2.5")
         self.assertEqual(config.ollama_default_num_predict, 150)
         self.assertEqual(config.ollama_max_num_predict, 1500)
+        self.assertEqual(config.ollama_num_ctx, 4096)
         self.assertEqual(config.ollama_timeout_seconds, 60)
         self.assertEqual(config.tts_base_url, "http://tts.example:8080")
         self.assertEqual(config.tts_timeout_seconds, 45)
@@ -138,6 +141,7 @@ class ConfigTests(unittest.TestCase):
             config = BotConfig.from_environment()
 
         self.assertEqual(config.ollama.model, "gemma3")
+        self.assertEqual(config.ollama.num_ctx, 2048)
         self.assertIn("suomeksi", config.ollama.system_prompt)
 
 
