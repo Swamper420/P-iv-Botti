@@ -122,6 +122,16 @@ class TelkkariConfig:
 
 
 @dataclass(frozen=True)
+class SttConfig:
+    base_url: str = "http://localhost:8001"
+    timeout_seconds: int = 60
+    beam_size: int = 5
+    vad_filter: bool = True
+    word_timestamps: bool = False
+    initial_prompt: str = ""
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -134,6 +144,7 @@ class BotConfig:
     paranna: ParannaConfig = ParannaConfig()
     tts: TtsConfig = TtsConfig()
     telkkari: TelkkariConfig = TelkkariConfig()
+    stt: SttConfig = SttConfig()
 
 
 
@@ -283,6 +294,30 @@ class BotConfig:
     @property
     def tts_audio_bitrate(self) -> str:
         return self.tts.audio_bitrate
+
+    @property
+    def stt_base_url(self) -> str:
+        return self.stt.base_url
+
+    @property
+    def stt_timeout_seconds(self) -> int:
+        return self.stt.timeout_seconds
+
+    @property
+    def stt_beam_size(self) -> int:
+        return self.stt.beam_size
+
+    @property
+    def stt_vad_filter(self) -> bool:
+        return self.stt.vad_filter
+
+    @property
+    def stt_word_timestamps(self) -> bool:
+        return self.stt.word_timestamps
+
+    @property
+    def stt_initial_prompt(self) -> str:
+        return self.stt.initial_prompt
 
 
     @classmethod
@@ -474,6 +509,27 @@ class BotConfig:
             timeout_seconds=int(os.getenv("TELKKARI_TIMEOUT_SECONDS", "30")),
         )
 
+        stt_beam_size = int(os.getenv("STT_BEAM_SIZE", "5"))
+        if stt_beam_size < 1:
+            raise ValueError("STT_BEAM_SIZE must be >= 1")
+
+        stt_timeout_seconds = int(os.getenv("STT_TIMEOUT_SECONDS", "60"))
+        if stt_timeout_seconds < 1:
+            raise ValueError("STT_TIMEOUT_SECONDS must be >= 1")
+
+        stt_config = SttConfig(
+            base_url=os.getenv("STT_BASE_URL", "http://localhost:8001").strip(),
+            timeout_seconds=stt_timeout_seconds,
+            beam_size=stt_beam_size,
+            vad_filter=(
+                os.getenv("STT_VAD_FILTER", "true").strip().lower() == "true"
+            ),
+            word_timestamps=(
+                os.getenv("STT_WORD_TIMESTAMPS", "false").strip().lower() == "true"
+            ),
+            initial_prompt=os.getenv("STT_INITIAL_PROMPT", "").strip(),
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -486,5 +542,7 @@ class BotConfig:
             paranna=paranna_config,
             tts=tts_config,
             telkkari=telkkari_config,
+            stt=stt_config,
         )
+
 

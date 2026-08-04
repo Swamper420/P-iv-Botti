@@ -39,6 +39,12 @@ class ConfigTests(unittest.TestCase):
                 "TELKKARI_DEFAULT_CHANNELS": "1,2,3",
                 "TELKKARI_CACHE_TIMEOUT_SECONDS": "600",
                 "TELKKARI_TIMEOUT_SECONDS": "15",
+                "STT_BASE_URL": "http://stt.example:8001",
+                "STT_TIMEOUT_SECONDS": "90",
+                "STT_BEAM_SIZE": "8",
+                "STT_VAD_FILTER": "true",
+                "STT_WORD_TIMESTAMPS": "true",
+                "STT_INITIAL_PROMPT": "Syötä tekstiä",
             },
             clear=False,
         ):
@@ -72,6 +78,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.telkkari.default_channels, (1, 2, 3))
         self.assertEqual(config.telkkari.cache_timeout_seconds, 600)
         self.assertEqual(config.telkkari.timeout_seconds, 15)
+        self.assertEqual(config.stt.base_url, "http://stt.example:8001")
+        self.assertEqual(config.stt.timeout_seconds, 90)
+        self.assertEqual(config.stt.beam_size, 8)
+        self.assertTrue(config.stt.vad_filter)
+        self.assertTrue(config.stt.word_timestamps)
+        self.assertEqual(config.stt.initial_prompt, "Syötä tekstiä")
 
 
         # Backward compatibility property checks
@@ -99,10 +111,32 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tts_speed, 1.2)
         self.assertEqual(config.tts_num_step, 24)
         self.assertEqual(config.tts_guidance_scale, 2.5)
+        self.assertEqual(config.stt_base_url, "http://stt.example:8001")
+        self.assertEqual(config.stt_timeout_seconds, 90)
+        self.assertEqual(config.stt_beam_size, 8)
+        self.assertTrue(config.stt_vad_filter)
+        self.assertTrue(config.stt_word_timestamps)
+        self.assertEqual(config.stt_initial_prompt, "Syötä tekstiä")
 
+    def test_invalid_stt_config_raises_error(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_BOT_TOKEN": "token", "STT_BEAM_SIZE": "0"},
+            clear=False,
+        ):
+            with self.assertRaises(ValueError):
+                BotConfig.from_environment()
 
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_BOT_TOKEN": "token", "STT_TIMEOUT_SECONDS": "0"},
+            clear=False,
+        ):
+            with self.assertRaises(ValueError):
+                BotConfig.from_environment()
 
 
 if __name__ == "__main__":
     unittest.main()
+
 
