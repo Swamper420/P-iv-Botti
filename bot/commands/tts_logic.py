@@ -145,18 +145,20 @@ async def synthesize_speech(
 
     try:
         resolved_voice = voice
-        if voice:
-            if available_voices is None:
-                try:
-                    voices_data = await list_voices(
-                        base_url, timeout_seconds=timeout_seconds, client=client
-                    )
-                    available_voices = extract_voice_ids(voices_data)
-                except Exception as err:
-                    LOGGER.warning("Could not fetch voice catalog for fuzzy matching: %s", err)
-                    available_voices = []
+        if available_voices is None:
+            try:
+                voices_data = await list_voices(
+                    base_url, timeout_seconds=timeout_seconds, client=client
+                )
+                available_voices = extract_voice_ids(voices_data)
+            except Exception as err:
+                LOGGER.warning("Could not fetch voice catalog: %s", err)
+                available_voices = []
 
+        if voice:
             resolved_voice = resolve_voice(voice, available_voices)
+        elif available_voices:
+            resolved_voice = available_voices[0]
 
         target_url = f"{base_url.rstrip('/')}/api/v1/tts"
         payload: dict[str, Any] = {
