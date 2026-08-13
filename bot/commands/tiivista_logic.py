@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from collections import Counter
 from html.parser import HTMLParser
+from io import BytesIO
 from typing import Any
 
 import httpx
+import numpy as np
+from PIL import Image, ImageOps
 
 from bot.commands.aih_logic import stream_ollama_completion
 
@@ -211,3 +216,160 @@ def create_3_word_caption(summary_text: str, max_words: int = 3) -> str:
     selected = words[:max_words]
     caption = " ".join(selected)
     return caption.capitalize()
+
+
+COCO_FINNISH_NAMES: dict[str, tuple[str, str]] = {
+    "person": ("henkilö", "henkilöä"),
+    "bicycle": ("polkupyörä", "polkupyörää"),
+    "car": ("auto", "autoa"),
+    "motorcycle": ("moottoripyörä", "moottoripyörää"),
+    "airplane": ("lentokone", "lentokonetta"),
+    "bus": ("bussi", "bussia"),
+    "train": ("juna", "junaa"),
+    "truck": ("kuorma-auto", "kuorma-autoa"),
+    "boat": ("vene", "venettä"),
+    "traffic light": ("liikennevalo", "liikennevaloa"),
+    "fire hydrant": ("paloposti", "palopostia"),
+    "stop sign": ("pysähtymismerkki", "pysähtymismerkkiä"),
+    "bench": ("penkki", "penkkiä"),
+    "bird": ("lintu", "lintua"),
+    "cat": ("kissa", "kissaa"),
+    "dog": ("koira", "koiraa"),
+    "horse": ("hevonen", "hevosta"),
+    "sheep": ("lammas", "lammasta"),
+    "cow": ("lehmä", "lehmää"),
+    "elephant": ("norsu", "norsua"),
+    "bear": ("karhu", "karhua"),
+    "zebra": ("sebra", "sebraa"),
+    "giraffe": ("kirahvi", "kirahvia"),
+    "backpack": ("reppu", "reppua"),
+    "umbrella": ("sateenvarjo", "sateenvarjoa"),
+    "handbag": ("käsilaukku", "käsilaukkua"),
+    "tie": ("solmio", "solmiota"),
+    "suitcase": ("matkalaukku", "matkalaukkua"),
+    "frisbee": ("frisbee", "frisbeetä"),
+    "skis": ("sukset", "suksia"),
+    "snowboard": ("lumilauta", "lumilautaa"),
+    "sports ball": ("pallo", "palloa"),
+    "kite": ("leija", "leijaa"),
+    "baseball bat": ("pesäpallomaila", "pesäpallomailaa"),
+    "baseball glove": ("pesäpallohanska", "pesäpallohanskaa"),
+    "skateboard": ("rullalauta", "rullalautaa"),
+    "surfboard": ("surffilauta", "surffilautaa"),
+    "tennis racket": ("tennismaila", "tennismailaa"),
+    "bottle": ("pullo", "pulloa"),
+    "wine glass": ("viinilasi", "viinilasia"),
+    "cup": ("muki", "mukia"),
+    "fork": ("haarukka", "haarukkaa"),
+    "knife": ("veitsi", "veistä"),
+    "spoon": ("lusikka", "lusikkaa"),
+    "bowl": ("kulho", "kulhoa"),
+    "banana": ("banaani", "banaania"),
+    "apple": ("omena", "omenaa"),
+    "sandwich": ("voileipä", "voileipää"),
+    "orange": ("appelsiini", "appelsiinia"),
+    "broccoli": ("parsakaali", "parsakaalia"),
+    "carrot": ("porkkana", "porkkanaa"),
+    "hot dog": ("nakki", "nakkia"),
+    "pizza": ("pitsa", "pitsaa"),
+    "donut": ("donitsi", "donitsia"),
+    "cake": ("kakku", "kakkua"),
+    "chair": ("tuoli", "tuolia"),
+    "couch": ("sohva", "sohvaa"),
+    "potted plant": ("ruukkukasvi", "ruukkukasvia"),
+    "bed": ("sänky", "sänkyä"),
+    "dining table": ("ruokapöytä", "ruokapöytää"),
+    "toilet": ("vessa", "vessaa"),
+    "tv": ("televisio", "televisiota"),
+    "laptop": ("kannettava tietokone", "kannettavaa tietokonetta"),
+    "mouse": ("hiiri", "hiirtä"),
+    "remote": ("kaukosäädin", "kaukosäädintä"),
+    "keyboard": ("näppäimistö", "näppäimistöä"),
+    "cell phone": ("matkapuhelin", "matkapuhelinta"),
+    "microwave": ("mikroaaltouuni", "mikroaaltouunia"),
+    "oven": ("uuni", "uunia"),
+    "toaster": ("paahdin", "paahdinta"),
+    "sink": ("pesuallas", "pesuallasta"),
+    "refrigerator": ("jääkaappi", "jääkaappia"),
+    "book": ("kirja", "kirjaa"),
+    "clock": ("kello", "kelloa"),
+    "vase": ("maljakko", "maljakkoa"),
+    "scissors": ("sakset", "saksia"),
+    "teddy bear": ("nalle", "nallea"),
+    "hair drier": ("hiustenkuivain", "hiustenkuivainta"),
+    "toothbrush": ("hammasharja", "hammasharjaa"),
+}
+
+_MODEL_CACHE: dict[str, Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+
+def _get_yolo_model(model_name: str, model_loader: Any = None) -> Any:
+    if model_loader is not None:
+        return model_loader(model_name)
+    with _MODEL_CACHE_LOCK:
+        if model_name not in _MODEL_CACHE:
+            from ultralytics import YOLO
+
+            _MODEL_CACHE[model_name] = YOLO(model_name)
+        return _MODEL_CACHE[model_name]
+
+
+def recognize_objects_with_yolo(
+    image_bytes: bytes,
+    *,
+    model_name: str = "yolo26n.pt",
+    confidence_threshold: float = 0.25,
+    model_loader: Any = None,
+) -> str:
+    """Recognize objects in an image using YOLO model and return a Finnish text description."""
+    if not image_bytes:
+        return ""
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as source_image:
+            image_rgb = np.asarray(
+                ImageOps.exif_transpose(source_image).convert("RGB")
+            )
+    except Exception as err:
+        LOGGER.warning("Failed to open image for YOLO object recognition: %s", err)
+        return ""
+
+    try:
+        model = _get_yolo_model(model_name, model_loader)
+        results = model.predict(
+            source=image_rgb, conf=confidence_threshold, device="cpu", verbose=False
+        )
+    except Exception as err:
+        LOGGER.exception("YOLO object recognition inference failed: %s", err)
+        return ""
+
+    if not results or results[0].boxes is None or len(results[0].boxes) == 0:
+        return "Kuvassa ei tunnistettu kohteita."
+
+    boxes = results[0].boxes
+    classes = boxes.cls.cpu().numpy()
+    names = getattr(results[0], "names", {})
+
+    counts: Counter[str] = Counter()
+    for cls_id in classes:
+        cls_int = int(cls_id)
+        if isinstance(names, dict):
+            raw_name = names.get(cls_int, f"class_{cls_int}")
+        elif isinstance(names, (list, tuple)) and 0 <= cls_int < len(names):
+            raw_name = names[cls_int]
+        else:
+            raw_name = f"class_{cls_int}"
+
+        counts[str(raw_name).lower()] += 1
+
+    formatted_items: list[str] = []
+    for raw_name, count in counts.items():
+        if raw_name in COCO_FINNISH_NAMES:
+            sing, plur = COCO_FINNISH_NAMES[raw_name]
+            noun = sing if count == 1 else plur
+        else:
+            noun = raw_name
+        formatted_items.append(f"{count} {noun}")
+
+    return "Kuvasta tunnistettiin: " + ", ".join(formatted_items) + "."

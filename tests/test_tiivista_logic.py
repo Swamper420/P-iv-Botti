@@ -1,5 +1,9 @@
+from io import BytesIO
 import unittest
 from unittest.mock import AsyncMock, MagicMock
+
+import numpy as np
+from PIL import Image
 
 from bot.commands.tiivista_logic import (
     create_3_word_caption,
@@ -7,8 +11,41 @@ from bot.commands.tiivista_logic import (
     extract_urls,
     fetch_webpage_text,
     parse_tiivista_command,
+    recognize_objects_with_yolo,
     summarize_text_with_ollama,
 )
+
+
+def _create_dummy_image_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (50, 50), color="blue").save(output, format="PNG")
+    return output.getvalue()
+
+
+class _DummyBoxes:
+    def __init__(self, classes: list[float]) -> None:
+        self._classes_array = np.array(classes, dtype=np.float32)
+        cls_mock = MagicMock()
+        cls_mock.cpu().numpy.return_value = self._classes_array
+        self.cls = cls_mock
+
+    def __len__(self) -> int:
+        return len(self._classes_array)
+
+
+class _DummyYoloResult:
+    def __init__(self, classes: list[float], names: dict[int, str]) -> None:
+        self.boxes = _DummyBoxes(classes) if classes else None
+        self.names = names
+
+
+class _DummyYoloModel:
+    def __init__(self, classes: list[float], names: dict[int, str]) -> None:
+        self._classes = classes
+        self._names = names
+
+    def predict(self, **kwargs: object) -> list[_DummyYoloResult]:
+        return [_DummyYoloResult(self._classes, self._names)]
 
 
 class TiivistaLogicTests(unittest.IsolatedAsyncioTestCase):
@@ -121,6 +158,36 @@ class TiivistaLogicTests(unittest.IsolatedAsyncioTestCase):
         summary = "Tämä on erittäin mielenkiintoinen tiivistelmä uutisesta."
         caption = create_3_word_caption(summary, max_words=3)
         self.assertEqual(caption, "Tämä on erittäin")
+
+    def test_recognize_objects_with_yolo_success(self) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        dummy_model = _DummyYoloModel(
+            classes=[0.0, 0.0, 16.0, 2.0],
+            names={0: "person", 16: "dog", 2: "car"},
+        )
+        result = recognize_objects_with_yolo(
+            img_bytes,
+            model_name="yolo26n.pt",
+            model_loader=lambda name: dummy_model,
+        )
+        self.assertIn("Kuvasta tunnistettiin:", result)
+        self.assertIn("2 henkilöä", result)
+        self.assertIn("1 koira", result)
+        self.assertIn("1 auto", result)
+
+    def test_recognize_objects_with_yolo_no_detections(self) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        dummy_model = _DummyYoloModel(classes=[], names={})
+        result = recognize_objects_with_yolo(
+            img_bytes,
+            model_name="yolo26n.pt",
+            model_loader=lambda name: dummy_model,
+        )
+        self.assertEqual(result, "Kuvassa ei tunnistettu kohteita.")
+
+    def test_recognize_objects_with_yolo_invalid_bytes(self) -> None:
+        result = recognize_objects_with_yolo(b"invalid image bytes")
+        self.assertEqual(result, "")
 
 
 if __name__ == "__main__":

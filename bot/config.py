@@ -146,6 +146,9 @@ class TiivistaConfig:
         "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
     )
     caption_num_words: int = 3
+    yolo_model: str = "yolo26n.pt"
+    yolo_confidence_threshold: float = 0.25
+    max_image_bytes: int = 10_000_000
 
 
 @dataclass(frozen=True)
@@ -592,6 +595,20 @@ class BotConfig:
         if tiivista_caption_num_words < 1:
             raise ValueError("TIIVISTA_CAPTION_NUM_WORDS must be >= 1")
 
+        tiivista_yolo_confidence_threshold = float(
+            os.getenv("TIIVISTA_YOLO_CONFIDENCE_THRESHOLD", "0.25")
+        )
+        if not 0 <= tiivista_yolo_confidence_threshold <= 1:
+            raise ValueError(
+                "TIIVISTA_YOLO_CONFIDENCE_THRESHOLD must be between 0 and 1"
+            )
+
+        tiivista_max_image_bytes = int(
+            os.getenv("TIIVISTA_MAX_IMAGE_BYTES", "10000000")
+        )
+        if tiivista_max_image_bytes < 1:
+            raise ValueError("TIIVISTA_MAX_IMAGE_BYTES must be >= 1")
+
         default_tiivista_prompt = (
             "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
             "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
@@ -609,6 +626,9 @@ class BotConfig:
                 "TIIVISTA_SYSTEM_PROMPT", default_tiivista_prompt
             ).strip(),
             caption_num_words=tiivista_caption_num_words,
+            yolo_model=os.getenv("TIIVISTA_YOLO_MODEL", "yolo26n.pt").strip(),
+            yolo_confidence_threshold=tiivista_yolo_confidence_threshold,
+            max_image_bytes=tiivista_max_image_bytes,
         )
 
         return cls(

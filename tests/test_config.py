@@ -45,6 +45,9 @@ class ConfigTests(unittest.TestCase):
                 "STT_VAD_FILTER": "true",
                 "STT_WORD_TIMESTAMPS": "true",
                 "STT_INITIAL_PROMPT": "Syötä tekstiä",
+                "TIIVISTA_YOLO_MODEL": "yolo26s.pt",
+                "TIIVISTA_YOLO_CONFIDENCE_THRESHOLD": "0.3",
+                "TIIVISTA_MAX_IMAGE_BYTES": "5000000",
             },
             clear=False,
         ):
@@ -84,6 +87,9 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.stt.vad_filter)
         self.assertTrue(config.stt.word_timestamps)
         self.assertEqual(config.stt.initial_prompt, "Syötä tekstiä")
+        self.assertEqual(config.tiivista.yolo_model, "yolo26s.pt")
+        self.assertEqual(config.tiivista.yolo_confidence_threshold, 0.3)
+        self.assertEqual(config.tiivista.max_image_bytes, 5000000)
 
 
         # Backward compatibility property checks

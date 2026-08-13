@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
-from telegram import InputFile, Update
+from telegram import InputFile, PhotoSize, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -15,6 +16,7 @@ from bot.commands.tiivista_logic import (
     extract_urls,
     fetch_webpage_text,
     parse_tiivista_command,
+    recognize_objects_with_yolo,
     summarize_text_with_ollama,
 )
 from bot.commands.tts_logic import reencode_audio_for_telegram, synthesize_speech
@@ -22,7 +24,21 @@ from bot.config import BotConfig
 
 LOGGER = logging.getLogger(__name__)
 
-COMMAND_USAGE = "!tiivistä <URL|teksti> | !tiivistä [ääni] <URL|teksti>"
+COMMAND_USAGE = "!tiivistä <URL|teksti|kuva> | !tiivistä [ääni] <URL|teksti|kuva>"
+_TIIVISTA_REGEX = r"(?i)^\s*!?tiivist(?:ä|a)\b"
+
+
+def _extract_target_photo(message: object) -> PhotoSize | None:
+    photos = getattr(message, "photo", None)
+    if photos:
+        return photos[-1]
+
+    reply_message = getattr(message, "reply_to_message", None)
+    reply_photos = getattr(reply_message, "photo", None)
+    if reply_photos:
+        return reply_photos[-1]
+
+    return None
 
 
 def _build_handler(
@@ -31,13 +47,15 @@ def _build_handler(
     @command_handler(config)
     async def handle_tiivista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
-        if message is None or not message.text:
+        if message is None:
             return
 
-        is_match, voice, content_or_url = parse_tiivista_command(message.text)
+        cmd_text = message.text or message.caption or ""
+        is_match, voice, content_or_url = parse_tiivista_command(cmd_text)
         if not is_match:
             return
 
+        target_photo = _extract_target_photo(message)
         target_url: str | None = None
         raw_text: str = ""
 
@@ -47,8 +65,8 @@ def _build_handler(
         elif content_or_url:
             raw_text = content_or_url
 
-        # Check reply_to_message if no direct content or URL provided
-        if not target_url and not raw_text and message.reply_to_message:
+        # Check reply_to_message if no photo/direct content/URL provided
+        if not target_photo and not target_url and not raw_text and message.reply_to_message:
             replied_msg = message.reply_to_message
             replied_text = replied_msg.text or replied_msg.caption or ""
             replied_urls = extract_urls(replied_text)
@@ -57,10 +75,10 @@ def _build_handler(
             elif replied_text.strip():
                 raw_text = replied_text.strip()
 
-        if not target_url and not raw_text:
+        if not target_photo and not target_url and not raw_text:
             await reply_in_chunks(
                 update,
-                "Käyttö: !tiivistä <URL|teksti> tai vastaa viestiin komennolla !tiivistä.\n"
+                "Käyttö: !tiivistä <URL|teksti|kuva> tai vastaa viestiin komennolla !tiivistä.\n"
                 "Esimerkki: !tiivistä https://yle.fi/a/74-20000000",
                 config.max_reply_length,
             )
@@ -72,7 +90,43 @@ def _build_handler(
             )
 
         source_text: str = ""
-        if target_url:
+        if target_photo:
+            try:
+                tg_file = await context.bot.get_file(target_photo.file_id)
+                photo_data = await tg_file.download_as_bytearray()
+                photo_bytes = bytes(photo_data)
+            except Exception:
+                LOGGER.exception("Failed to download photo for tiivistä command")
+                await reply_in_chunks(
+                    update, "Virhe kuvan lataamisessa.", config.max_reply_length
+                )
+                return
+
+            if len(photo_bytes) > config.tiivista.max_image_bytes:
+                await reply_in_chunks(
+                    update, "Kuva on liian suuri käsittelyyn.", config.max_reply_length
+                )
+                return
+
+            try:
+                image_description = await asyncio.to_thread(
+                    recognize_objects_with_yolo,
+                    photo_bytes,
+                    model_name=config.tiivista.yolo_model,
+                    confidence_threshold=config.tiivista.yolo_confidence_threshold,
+                )
+            except Exception:
+                LOGGER.exception("Error performing YOLO object recognition for tiivistä command")
+                await reply_in_chunks(
+                    update, "Virhe kuvan tunnistuksessa.", config.max_reply_length
+                )
+                return
+
+            if raw_text:
+                source_text = f"{image_description}\nLisätiedot: {raw_text}"
+            else:
+                source_text = image_description
+        elif target_url:
             try:
                 source_text = await fetch_webpage_text(
                     url=target_url,
@@ -173,7 +227,9 @@ def _build_handler(
 def register(application: Application, config: BotConfig) -> None:
     application.add_handler(
         MessageHandler(
-            filters.Regex(r"(?i)^\s*!?tiivist(?:ä|a)\b"),
+            filters.Regex(_TIIVISTA_REGEX)
+            | (filters.PHOTO & filters.CaptionRegex(_TIIVISTA_REGEX))
+            | (filters.REPLY & filters.Regex(_TIIVISTA_REGEX)),
             _build_handler(config),
         )
     )
