@@ -135,6 +135,20 @@ class ReminderConfig:
 
 
 @dataclass(frozen=True)
+class TiivistaConfig:
+    timeout_seconds: int = 60
+    max_web_page_bytes: int = 2_000_000
+    max_text_length: int = 12_000
+    summary_num_predict: int = 300
+    user_agent: str = "Mozilla/5.0 (compatible; P-iv-Botti/1.0)"
+    system_prompt: str = (
+        "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
+        "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
+    )
+    caption_num_words: int = 3
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -149,6 +163,8 @@ class BotConfig:
     telkkari: TelkkariConfig = TelkkariConfig()
     stt: SttConfig = SttConfig()
     reminder: ReminderConfig = ReminderConfig()
+    tiivista: TiivistaConfig = TiivistaConfig()
+
 
 
 
@@ -548,6 +564,53 @@ class BotConfig:
             max_per_chat=reminder_max_per_chat,
         )
 
+        tiivista_timeout_seconds = int(os.getenv("TIIVISTA_TIMEOUT_SECONDS", "60"))
+        if tiivista_timeout_seconds < 1:
+            raise ValueError("TIIVISTA_TIMEOUT_SECONDS must be >= 1")
+
+        tiivista_max_web_page_bytes = int(
+            os.getenv("TIIVISTA_MAX_WEB_PAGE_BYTES", "2000000")
+        )
+        if tiivista_max_web_page_bytes < 1:
+            raise ValueError("TIIVISTA_MAX_WEB_PAGE_BYTES must be >= 1")
+
+        tiivista_max_text_length = int(
+            os.getenv("TIIVISTA_MAX_TEXT_LENGTH", "12000")
+        )
+        if tiivista_max_text_length < 1:
+            raise ValueError("TIIVISTA_MAX_TEXT_LENGTH must be >= 1")
+
+        tiivista_summary_num_predict = int(
+            os.getenv("TIIVISTA_SUMMARY_NUM_PREDICT", "300")
+        )
+        if tiivista_summary_num_predict < 1:
+            raise ValueError("TIIVISTA_SUMMARY_NUM_PREDICT must be >= 1")
+
+        tiivista_caption_num_words = int(
+            os.getenv("TIIVISTA_CAPTION_NUM_WORDS", "3")
+        )
+        if tiivista_caption_num_words < 1:
+            raise ValueError("TIIVISTA_CAPTION_NUM_WORDS must be >= 1")
+
+        default_tiivista_prompt = (
+            "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
+            "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
+        )
+
+        tiivista_config = TiivistaConfig(
+            timeout_seconds=tiivista_timeout_seconds,
+            max_web_page_bytes=tiivista_max_web_page_bytes,
+            max_text_length=tiivista_max_text_length,
+            summary_num_predict=tiivista_summary_num_predict,
+            user_agent=os.getenv(
+                "TIIVISTA_USER_AGENT", "Mozilla/5.0 (compatible; P-iv-Botti/1.0)"
+            ).strip(),
+            system_prompt=os.getenv(
+                "TIIVISTA_SYSTEM_PROMPT", default_tiivista_prompt
+            ).strip(),
+            caption_num_words=tiivista_caption_num_words,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -562,6 +625,8 @@ class BotConfig:
             telkkari=telkkari_config,
             stt=stt_config,
             reminder=reminder_config,
+            tiivista=tiivista_config,
         )
+
 
 
