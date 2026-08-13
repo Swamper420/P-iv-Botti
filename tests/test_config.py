@@ -137,12 +137,22 @@ class ConfigTests(unittest.TestCase):
 
     def test_ollama_default_config(self) -> None:
         env = {"TELEGRAM_BOT_TOKEN": "token"}
-        with patch.dict(os.environ, env, clear=True):
-            config = BotConfig.from_environment()
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
 
         self.assertEqual(config.ollama.model, "gemma3")
         self.assertEqual(config.ollama.num_ctx, 2048)
         self.assertIn("suomeksi", config.ollama.system_prompt)
+
+    def test_reminder_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertEqual(config.reminder.check_interval_seconds, 5)
+        self.assertEqual(config.reminder.max_per_chat, 50)
 
 
 if __name__ == "__main__":

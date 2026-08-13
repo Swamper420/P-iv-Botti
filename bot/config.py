@@ -129,6 +129,12 @@ class SttConfig:
 
 
 @dataclass(frozen=True)
+class ReminderConfig:
+    check_interval_seconds: int = 5
+    max_per_chat: int = 50
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -142,6 +148,7 @@ class BotConfig:
     tts: TtsConfig = TtsConfig()
     telkkari: TelkkariConfig = TelkkariConfig()
     stt: SttConfig = SttConfig()
+    reminder: ReminderConfig = ReminderConfig()
 
 
 
@@ -524,6 +531,23 @@ class BotConfig:
             initial_prompt=os.getenv("STT_INITIAL_PROMPT", "").strip(),
         )
 
+        reminder_check_interval_seconds = int(
+            os.getenv("REMINDER_CHECK_INTERVAL_SECONDS", "5")
+        )
+        if reminder_check_interval_seconds < 1:
+            raise ValueError("REMINDER_CHECK_INTERVAL_SECONDS must be >= 1")
+
+        reminder_max_per_chat = int(
+            os.getenv("REMINDER_MAX_PER_CHAT", "50")
+        )
+        if reminder_max_per_chat < 1:
+            raise ValueError("REMINDER_MAX_PER_CHAT must be >= 1")
+
+        reminder_config = ReminderConfig(
+            check_interval_seconds=reminder_check_interval_seconds,
+            max_per_chat=reminder_max_per_chat,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -537,6 +561,7 @@ class BotConfig:
             tts=tts_config,
             telkkari=telkkari_config,
             stt=stt_config,
+            reminder=reminder_config,
         )
 
 
