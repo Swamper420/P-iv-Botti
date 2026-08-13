@@ -149,6 +149,11 @@ class TiivistaConfig:
     yolo_model: str = "yolo26n.pt"
     yolo_confidence_threshold: float = 0.25
     max_image_bytes: int = 10_000_000
+    ocr_enabled: bool = True
+    ocr_language: str = "fin+eng"
+    ocr_tesseract_cmd: str = "tesseract"
+    ocr_tessdata_dir: str = ""
+    ocr_timeout_seconds: int = 30
 
 
 @dataclass(frozen=True)
@@ -609,6 +614,24 @@ class BotConfig:
         if tiivista_max_image_bytes < 1:
             raise ValueError("TIIVISTA_MAX_IMAGE_BYTES must be >= 1")
 
+        tiivista_ocr_enabled = (
+            os.getenv("TIIVISTA_OCR_ENABLED", "true").strip().lower() == "true"
+        )
+        tiivista_ocr_language = os.getenv(
+            "TIIVISTA_OCR_LANGUAGE", "fin+eng"
+        ).strip()
+        tiivista_ocr_tesseract_cmd = os.getenv(
+            "TIIVISTA_OCR_TESSERACT_CMD", "tesseract"
+        ).strip()
+        tiivista_ocr_tessdata_dir = os.getenv(
+            "TIIVISTA_OCR_TESSDATA_DIR", ""
+        ).strip()
+        tiivista_ocr_timeout_seconds = int(
+            os.getenv("TIIVISTA_OCR_TIMEOUT_SECONDS", "30")
+        )
+        if tiivista_ocr_timeout_seconds < 1:
+            raise ValueError("TIIVISTA_OCR_TIMEOUT_SECONDS must be >= 1")
+
         default_tiivista_prompt = (
             "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
             "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
@@ -629,6 +652,11 @@ class BotConfig:
             yolo_model=os.getenv("TIIVISTA_YOLO_MODEL", "yolo26n.pt").strip(),
             yolo_confidence_threshold=tiivista_yolo_confidence_threshold,
             max_image_bytes=tiivista_max_image_bytes,
+            ocr_enabled=tiivista_ocr_enabled,
+            ocr_language=tiivista_ocr_language,
+            ocr_tesseract_cmd=tiivista_ocr_tesseract_cmd,
+            ocr_tessdata_dir=tiivista_ocr_tessdata_dir,
+            ocr_timeout_seconds=tiivista_ocr_timeout_seconds,
         )
 
         return cls(

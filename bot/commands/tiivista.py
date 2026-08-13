@@ -13,8 +13,10 @@ from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
 from bot.commands.tiivista_logic import (
     create_3_word_caption,
+    extract_text_with_ocr,
     extract_urls,
     fetch_webpage_text,
+    format_image_analysis_text,
     parse_tiivista_command,
     recognize_objects_with_yolo,
     summarize_text_with_ollama,
@@ -108,24 +110,61 @@ def _build_handler(
                 )
                 return
 
-            try:
-                image_description = await asyncio.to_thread(
-                    recognize_objects_with_yolo,
+            yolo_task = asyncio.to_thread(
+                recognize_objects_with_yolo,
+                photo_bytes,
+                model_name=config.tiivista.yolo_model,
+                confidence_threshold=config.tiivista.yolo_confidence_threshold,
+            )
+
+            if config.tiivista.ocr_enabled:
+                ocr_task = asyncio.to_thread(
+                    extract_text_with_ocr,
                     photo_bytes,
-                    model_name=config.tiivista.yolo_model,
-                    confidence_threshold=config.tiivista.yolo_confidence_threshold,
+                    tesseract_cmd=config.tiivista.ocr_tesseract_cmd,
+                    lang=config.tiivista.ocr_language,
+                    tessdata_dir=config.tiivista.ocr_tessdata_dir,
+                    timeout_seconds=config.tiivista.ocr_timeout_seconds,
                 )
-            except Exception:
-                LOGGER.exception("Error performing YOLO object recognition for tiivistä command")
+                yolo_res, ocr_res = await asyncio.gather(
+                    yolo_task, ocr_task, return_exceptions=True
+                )
+            else:
+                try:
+                    yolo_res = await yolo_task
+                except Exception as exc:
+                    yolo_res = exc
+                ocr_res = ""
+
+            if isinstance(yolo_res, Exception):
+                LOGGER.exception(
+                    "Error performing YOLO object recognition for tiivistä command",
+                    exc_info=yolo_res,
+                )
+                image_description = ""
+            else:
+                image_description = yolo_res or ""
+
+            if isinstance(ocr_res, Exception):
+                LOGGER.exception(
+                    "Error performing OCR for tiivistä command",
+                    exc_info=ocr_res,
+                )
+                ocr_text = ""
+            else:
+                ocr_text = ocr_res or ""
+
+            if not image_description and not ocr_text and not raw_text:
                 await reply_in_chunks(
                     update, "Virhe kuvan tunnistuksessa.", config.max_reply_length
                 )
                 return
 
-            if raw_text:
-                source_text = f"{image_description}\nLisätiedot: {raw_text}"
-            else:
-                source_text = image_description
+            source_text = format_image_analysis_text(
+                image_description=image_description,
+                ocr_text=ocr_text,
+                additional_text=raw_text,
+            )
         elif target_url:
             try:
                 source_text = await fetch_webpage_text(

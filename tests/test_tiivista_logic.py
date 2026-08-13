@@ -1,6 +1,7 @@
 from io import BytesIO
+import subprocess
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 from PIL import Image
@@ -8,8 +9,10 @@ from PIL import Image
 from bot.commands.tiivista_logic import (
     create_3_word_caption,
     extract_text_from_html,
+    extract_text_with_ocr,
     extract_urls,
     fetch_webpage_text,
+    format_image_analysis_text,
     parse_tiivista_command,
     recognize_objects_with_yolo,
     summarize_text_with_ollama,
@@ -188,6 +191,120 @@ class TiivistaLogicTests(unittest.IsolatedAsyncioTestCase):
     def test_recognize_objects_with_yolo_invalid_bytes(self) -> None:
         result = recognize_objects_with_yolo(b"invalid image bytes")
         self.assertEqual(result, "")
+
+    def test_extract_text_with_ocr_empty_bytes(self) -> None:
+        result = extract_text_with_ocr(b"")
+        self.assertEqual(result, "")
+
+    def test_extract_text_with_ocr_invalid_bytes(self) -> None:
+        result = extract_text_with_ocr(b"not an image")
+        self.assertEqual(result, "")
+
+    def test_extract_text_with_ocr_custom_runner(self) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        recorded_calls: list[dict] = []
+
+        def mock_runner(cmd: list[str], input_data: bytes, timeout: int) -> str:
+            recorded_calls.append({"cmd": cmd, "data_len": len(input_data), "timeout": timeout})
+            return "Helsinki uutiset 2026"
+
+        result = extract_text_with_ocr(
+            img_bytes,
+            tesseract_cmd="/usr/bin/tesseract",
+            lang="fin+eng",
+            tessdata_dir="/custom/tessdata",
+            timeout_seconds=20,
+            runner=mock_runner,
+        )
+        self.assertEqual(result, "Helsinki uutiset 2026")
+        self.assertEqual(len(recorded_calls), 1)
+        self.assertEqual(
+            recorded_calls[0]["cmd"],
+            ["/usr/bin/tesseract", "stdin", "stdout", "-l", "fin+eng", "--tessdata-dir", "/custom/tessdata"],
+        )
+        self.assertEqual(recorded_calls[0]["timeout"], 20)
+        self.assertGreater(recorded_calls[0]["data_len"], 0)
+
+    def test_extract_text_with_ocr_custom_runner_error(self) -> None:
+        img_bytes = _create_dummy_image_bytes()
+
+        def failing_runner(cmd: list[str], input_data: bytes, timeout: int) -> str:
+            raise RuntimeError("Runner error")
+
+        result = extract_text_with_ocr(img_bytes, runner=failing_runner)
+        self.assertEqual(result, "")
+
+    @patch("subprocess.run")
+    def test_extract_text_with_ocr_subprocess_success(self, mock_run: MagicMock) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = b"Tunnistettu teksti kuvasta\n"
+        mock_run.return_value = mock_proc
+
+        result = extract_text_with_ocr(img_bytes, lang="fin")
+        self.assertEqual(result, "Tunnistettu teksti kuvasta")
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        self.assertEqual(args[0], ["tesseract", "stdin", "stdout", "-l", "fin"])
+
+    @patch("subprocess.run")
+    def test_extract_text_with_ocr_subprocess_failure(self, mock_run: MagicMock) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.stderr = b"Language data not found"
+        mock_run.return_value = mock_proc
+
+        result = extract_text_with_ocr(img_bytes)
+        self.assertEqual(result, "")
+
+    @patch("subprocess.run")
+    def test_extract_text_with_ocr_binary_not_found(self, mock_run: MagicMock) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        mock_run.side_effect = FileNotFoundError()
+
+        result = extract_text_with_ocr(img_bytes)
+        self.assertEqual(result, "")
+
+    @patch("subprocess.run")
+    def test_extract_text_with_ocr_timeout(self, mock_run: MagicMock) -> None:
+        img_bytes = _create_dummy_image_bytes()
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["tesseract"], timeout=30)
+
+        result = extract_text_with_ocr(img_bytes)
+        self.assertEqual(result, "")
+
+    def test_format_image_analysis_text_all_present(self) -> None:
+        formatted = format_image_analysis_text(
+            image_description="Kuvasta tunnistettiin: 1 kissa.",
+            ocr_text="Kissakahvila avattu!",
+            additional_text="Käy katsomassa",
+        )
+        self.assertIn("Kuvasta tunnistettiin: 1 kissa.", formatted)
+        self.assertIn("Kuvasta tunnistettu teksti:\nKissakahvila avattu!", formatted)
+        self.assertIn("Lisätiedot: Käy katsomassa", formatted)
+
+    def test_format_image_analysis_text_ocr_only(self) -> None:
+        formatted = format_image_analysis_text(
+            image_description="Kuvassa ei tunnistettu kohteita.",
+            ocr_text="Tärkeä tiedote.",
+        )
+        self.assertEqual(formatted, "Kuvasta tunnistettu teksti:\nTärkeä tiedote.")
+
+    def test_format_image_analysis_text_no_detections_no_ocr(self) -> None:
+        formatted = format_image_analysis_text(
+            image_description="Kuvassa ei tunnistettu kohteita.",
+            ocr_text="",
+        )
+        self.assertEqual(formatted, "Kuvassa ei tunnistettu kohteita.")
+
+    def test_format_image_analysis_text_yolo_only(self) -> None:
+        formatted = format_image_analysis_text(
+            image_description="Kuvasta tunnistettiin: 1 auto.",
+            ocr_text="",
+        )
+        self.assertEqual(formatted, "Kuvasta tunnistettiin: 1 auto.")
 
 
 if __name__ == "__main__":

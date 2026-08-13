@@ -48,6 +48,11 @@ class ConfigTests(unittest.TestCase):
                 "TIIVISTA_YOLO_MODEL": "yolo26s.pt",
                 "TIIVISTA_YOLO_CONFIDENCE_THRESHOLD": "0.3",
                 "TIIVISTA_MAX_IMAGE_BYTES": "5000000",
+                "TIIVISTA_OCR_ENABLED": "true",
+                "TIIVISTA_OCR_LANGUAGE": "swe+eng",
+                "TIIVISTA_OCR_TESSERACT_CMD": "/usr/local/bin/tesseract",
+                "TIIVISTA_OCR_TESSDATA_DIR": "/opt/tessdata",
+                "TIIVISTA_OCR_TIMEOUT_SECONDS": "45",
             },
             clear=False,
         ):
@@ -90,6 +95,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tiivista.yolo_model, "yolo26s.pt")
         self.assertEqual(config.tiivista.yolo_confidence_threshold, 0.3)
         self.assertEqual(config.tiivista.max_image_bytes, 5000000)
+        self.assertTrue(config.tiivista.ocr_enabled)
+        self.assertEqual(config.tiivista.ocr_language, "swe+eng")
+        self.assertEqual(config.tiivista.ocr_tesseract_cmd, "/usr/local/bin/tesseract")
+        self.assertEqual(config.tiivista.ocr_tessdata_dir, "/opt/tessdata")
+        self.assertEqual(config.tiivista.ocr_timeout_seconds, 45)
 
 
         # Backward compatibility property checks
@@ -159,6 +169,16 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.reminder.check_interval_seconds, 5)
         self.assertEqual(config.reminder.max_per_chat, 50)
+
+
+    def test_invalid_tiivista_ocr_timeout_raises_error(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_BOT_TOKEN": "token", "TIIVISTA_OCR_TIMEOUT_SECONDS": "0"},
+            clear=False,
+        ):
+            with self.assertRaises(ValueError):
+                BotConfig.from_environment()
 
 
 if __name__ == "__main__":

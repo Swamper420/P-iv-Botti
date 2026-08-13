@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 import threading
 from collections import Counter
+from collections.abc import Callable
 from html.parser import HTMLParser
 from io import BytesIO
 from typing import Any
@@ -373,3 +375,94 @@ def recognize_objects_with_yolo(
         formatted_items.append(f"{count} {noun}")
 
     return "Kuvasta tunnistettiin: " + ", ".join(formatted_items) + "."
+
+
+def extract_text_with_ocr(
+    image_bytes: bytes,
+    *,
+    tesseract_cmd: str = "tesseract",
+    lang: str = "fin+eng",
+    tessdata_dir: str = "",
+    timeout_seconds: int = 30,
+    runner: Callable[..., Any] | None = None,
+) -> str:
+    """Extract text from an image using Tesseract OCR."""
+    if not image_bytes:
+        return ""
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as source_image:
+            image = ImageOps.exif_transpose(source_image)
+            img_buffer = BytesIO()
+            image.convert("RGB").save(img_buffer, format="PNG")
+            prepared_bytes = img_buffer.getvalue()
+    except Exception as err:
+        LOGGER.warning("Failed to open image for OCR: %s", err)
+        return ""
+
+    cmd: list[str] = [tesseract_cmd, "stdin", "stdout"]
+    if lang:
+        cmd.extend(["-l", lang])
+    if tessdata_dir:
+        cmd.extend(["--tessdata-dir", tessdata_dir])
+
+    if runner is not None:
+        try:
+            res = runner(cmd, input_data=prepared_bytes, timeout=timeout_seconds)
+            return str(res).strip() if res is not None else ""
+        except Exception as err:
+            LOGGER.warning("Custom OCR runner failed: %s", err)
+            return ""
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=prepared_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except FileNotFoundError:
+        LOGGER.warning("Tesseract binary '%s' not found.", tesseract_cmd)
+        return ""
+    except subprocess.TimeoutExpired:
+        LOGGER.warning("Tesseract OCR timed out after %d seconds.", timeout_seconds)
+        return ""
+    except Exception as err:
+        LOGGER.warning("Tesseract OCR subprocess failed: %s", err)
+        return ""
+
+    if proc.returncode != 0:
+        stderr_msg = proc.stderr.decode("utf-8", errors="replace").strip()
+        LOGGER.warning(
+            "Tesseract OCR exited with code %d: %s", proc.returncode, stderr_msg
+        )
+        return ""
+
+    return proc.stdout.decode("utf-8", errors="replace").strip()
+
+
+def format_image_analysis_text(
+    image_description: str = "",
+    ocr_text: str = "",
+    additional_text: str = "",
+) -> str:
+    """Format YOLO object detections, OCR text, and optional user caption/text into prompt text."""
+    sections: list[str] = []
+
+    desc = image_description.strip()
+    if desc and desc != "Kuvassa ei tunnistettu kohteita.":
+        sections.append(desc)
+    elif desc and not ocr_text.strip() and not additional_text.strip():
+        sections.append(desc)
+
+    ocr = ocr_text.strip()
+    if ocr:
+        sections.append(f"Kuvasta tunnistettu teksti:\n{ocr}")
+
+    extra = additional_text.strip()
+    if extra:
+        sections.append(f"Lisätiedot: {extra}")
+
+    return "\n\n".join(sections).strip()
