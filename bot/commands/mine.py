@@ -40,7 +40,9 @@ def _build_handler(
         )
 
         if reply_text:
-            await reply_in_chunks(update, reply_text, config.max_reply_length)
+            await reply_in_chunks(
+                update, reply_text, config.max_reply_length, parse_mode="HTML"
+            )
 
     return handle_mine
 

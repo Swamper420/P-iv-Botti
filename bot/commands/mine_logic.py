@@ -112,7 +112,7 @@ class CraftyClient:
 
 
 def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
-    """Format individual server info and stats into clean HTML-formatted lines."""
+    """Format individual server info and stats with stylized crazy formatting and gamer flavor."""
     server_id = (
         server.get("server_id")
         or server.get("server_uuid")
@@ -145,11 +145,11 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
 
     status_lower = str(status_val).strip().lower() if status_val else ""
     if is_running:
-        status_text = "Päällä"
+        status_text = "<b>PÄÄLLÄ</b> — <i>Kuutiot tulilla!</i>"
     elif status_lower in ("starting", "restarting", "käynnistyy"):
-        status_text = "Käynnistyy"
+        status_text = "<b>KÄYNNISTYY</b> — <i>Palikat asettuvat paikoilleen...</i>"
     else:
-        status_text = "Pois päältä"
+        status_text = "<b>POIS PÄÄLTÄ</b> — <i>Kuutiot unessa, servu offline.</i>"
 
     # Players
     online_players = (
@@ -174,21 +174,26 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             elif isinstance(p, str) and p.strip():
                 player_names.append(p.strip())
 
+    count_val = online_players or 0
     if max_players is not None:
-        players_display = f"{online_players or 0} / {max_players}"
+        players_display = f"<b>{count_val}</b> / <b>{max_players}</b>"
     elif online_players is not None:
-        players_display = str(online_players)
+        players_display = f"<b>{count_val}</b>"
     else:
-        players_display = "0"
+        players_display = "<b>0</b>"
 
     if player_names:
         escaped_names = [html.escape(n) for n in player_names]
         players_display += f" ({', '.join(escaped_names)})"
+    elif count_val == 0 and is_running:
+        players_display += " — <i>Aavemaisen hiljaista...</i>"
 
     lines = [
-        f"<b>{server_name}</b>",
-        f"• Tila: {status_text}",
-        f"• Pelaajat: {players_display}",
+        "╔══════════════════════════════════════╗",
+        f"  <b>{server_name}</b>",
+        "╚══════════════════════════════════════╝",
+        f"<code>» TILA:    </code> {status_text}",
+        f"<code>» PELAAJAT:</code> {players_display}",
     ]
 
     if is_running:
@@ -196,9 +201,9 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
         if cpu is not None:
             try:
                 cpu_float = float(cpu)
-                lines.append(f"• CPU: {cpu_float:.1f} %")
+                lines.append(f"<code>» CPU:     </code> <b>{cpu_float:.1f} %</b>")
             except (ValueError, TypeError):
-                lines.append(f"• CPU: {html.escape(str(cpu))}")
+                lines.append(f"<code>» CPU:     </code> <b>{html.escape(str(cpu))}</b>")
 
         mem_percent = stats.get("mem_percent") or stats.get("memory_percent")
         mem_usage = stats.get("mem") or stats.get("memory") or stats.get("mem_usage")
@@ -207,17 +212,19 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
         if formatted_mem and mem_percent is not None:
             try:
                 mem_float = float(mem_percent)
-                lines.append(f"• RAM: {formatted_mem} ({mem_float:.1f} %)")
+                lines.append(
+                    f"<code>» RAM:     </code> <b>{formatted_mem}</b> ({mem_float:.1f} %)"
+                )
             except (ValueError, TypeError):
-                lines.append(f"• RAM: {formatted_mem}")
+                lines.append(f"<code>» RAM:     </code> <b>{formatted_mem}</b>")
         elif formatted_mem:
-            lines.append(f"• RAM: {formatted_mem}")
+            lines.append(f"<code>» RAM:     </code> <b>{formatted_mem}</b>")
         elif mem_percent is not None:
             try:
                 mem_float = float(mem_percent)
-                lines.append(f"• RAM: {mem_float:.1f} %")
+                lines.append(f"<code>» RAM:     </code> <b>{mem_float:.1f} %</b>")
             except (ValueError, TypeError):
-                lines.append(f"• RAM: {html.escape(str(mem_percent))}")
+                lines.append(f"<code>» RAM:     </code> <b>{html.escape(str(mem_percent))}</b>")
 
         version = (
             stats.get("version")
@@ -226,7 +233,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or server.get("server_version")
         )
         if version:
-            lines.append(f"• Versio: {html.escape(str(version))}")
+            lines.append(f"<code>» VERSIO:  </code> <b>{html.escape(str(version))}</b>")
 
         port = (
             server.get("server_port")
@@ -235,7 +242,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or stats.get("port")
         )
         if port:
-            lines.append(f"• Portti: {html.escape(str(port))}")
+            lines.append(f"<code>» PORTTI:  </code> <code>{html.escape(str(port))}</code>")
 
         world = (
             stats.get("world_name")
@@ -244,7 +251,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or server.get("world")
         )
         if world and str(world).strip() != str(raw_name).strip():
-            lines.append(f"• Maailma: {html.escape(str(world))}")
+            lines.append(f"<code>» MAAILMA: </code> <b>{html.escape(str(world))}</b>")
 
         motd = (
             stats.get("motd")
@@ -258,7 +265,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             and str(motd).strip() != str(raw_name).strip()
             and str(motd).strip() != str(world).strip()
         ):
-            lines.append(f"• Kuvaus: {html.escape(str(motd))}")
+            lines.append(f"<code>» KUVAUS:  </code> <i>{html.escape(str(motd))}</i>")
 
     return "\n".join(lines)
 
@@ -337,5 +344,4 @@ def fetch_mine_status(
 
         server_blocks.append(_format_server_block(server, stats))
 
-    header = "<b>Minecraft-palvelimet (Crafty Controller):</b>\n\n"
-    return header + "\n\n".join(server_blocks)
+    return "\n\n".join(server_blocks)
