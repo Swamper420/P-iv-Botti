@@ -53,6 +53,11 @@ class ConfigTests(unittest.TestCase):
                 "TIIVISTA_OCR_TESSERACT_CMD": "/usr/local/bin/tesseract",
                 "TIIVISTA_OCR_TESSDATA_DIR": "/opt/tessdata",
                 "TIIVISTA_OCR_TIMEOUT_SECONDS": "45",
+                "CRAFTY_BASE_URL": "https://crafty.example:8443",
+                "CRAFTY_API_TOKEN": "secret-crafty-token",
+                "CRAFTY_TIMEOUT_SECONDS": "15",
+                "CRAFTY_VERIFY_SSL": "true",
+                "CRAFTY_DEFAULT_SERVER_ID": "server-uuid-1",
             },
             clear=False,
         ):
@@ -100,6 +105,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tiivista.ocr_tesseract_cmd, "/usr/local/bin/tesseract")
         self.assertEqual(config.tiivista.ocr_tessdata_dir, "/opt/tessdata")
         self.assertEqual(config.tiivista.ocr_timeout_seconds, 45)
+        self.assertEqual(config.crafty.base_url, "https://crafty.example:8443")
+        self.assertEqual(config.crafty.api_token, "secret-crafty-token")
+        self.assertEqual(config.crafty.timeout_seconds, 15)
+        self.assertTrue(config.crafty.verify_ssl)
+        self.assertEqual(config.crafty.default_server_id, "server-uuid-1")
+        self.assertTrue(config.crafty.is_configured)
 
 
         # Backward compatibility property checks
@@ -175,6 +186,28 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {"TELEGRAM_BOT_TOKEN": "token", "TIIVISTA_OCR_TIMEOUT_SECONDS": "0"},
+            clear=False,
+        ):
+            with self.assertRaises(ValueError):
+                BotConfig.from_environment()
+
+    def test_crafty_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertEqual(config.crafty.base_url, "https://localhost:8443")
+        self.assertEqual(config.crafty.api_token, "")
+        self.assertEqual(config.crafty.timeout_seconds, 10)
+        self.assertFalse(config.crafty.verify_ssl)
+        self.assertEqual(config.crafty.default_server_id, "")
+        self.assertFalse(config.crafty.is_configured)
+
+    def test_invalid_crafty_timeout_raises_error(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_BOT_TOKEN": "token", "CRAFTY_TIMEOUT_SECONDS": "0"},
             clear=False,
         ):
             with self.assertRaises(ValueError):

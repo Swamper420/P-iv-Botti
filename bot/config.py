@@ -157,6 +157,19 @@ class TiivistaConfig:
 
 
 @dataclass(frozen=True)
+class CraftyConfig:
+    base_url: str = "https://localhost:8443"
+    api_token: str = ""
+    timeout_seconds: int = 10
+    verify_ssl: bool = False
+    default_server_id: str = ""
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_token)
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -172,6 +185,7 @@ class BotConfig:
     stt: SttConfig = SttConfig()
     reminder: ReminderConfig = ReminderConfig()
     tiivista: TiivistaConfig = TiivistaConfig()
+    crafty: CraftyConfig = CraftyConfig()
 
 
 
@@ -659,6 +673,20 @@ class BotConfig:
             ocr_timeout_seconds=tiivista_ocr_timeout_seconds,
         )
 
+        crafty_timeout_seconds = int(os.getenv("CRAFTY_TIMEOUT_SECONDS", "10"))
+        if crafty_timeout_seconds < 1:
+            raise ValueError("CRAFTY_TIMEOUT_SECONDS must be >= 1")
+
+        crafty_config = CraftyConfig(
+            base_url=os.getenv("CRAFTY_BASE_URL", "https://localhost:8443").strip(),
+            api_token=os.getenv("CRAFTY_API_TOKEN", "").strip(),
+            timeout_seconds=crafty_timeout_seconds,
+            verify_ssl=(
+                os.getenv("CRAFTY_VERIFY_SSL", "false").strip().lower() == "true"
+            ),
+            default_server_id=os.getenv("CRAFTY_DEFAULT_SERVER_ID", "").strip(),
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -674,6 +702,7 @@ class BotConfig:
             stt=stt_config,
             reminder=reminder_config,
             tiivista=tiivista_config,
+            crafty=crafty_config,
         )
 
 

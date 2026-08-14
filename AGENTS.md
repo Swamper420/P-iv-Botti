@@ -26,6 +26,8 @@ When extending this project:
   - `hoi.py` + `hoi_logic.py`
   - `muistuta.py` + `muistuta_logic.py`
   - `naama.py` + `naama_logic.py`
+  - `paranna.py` + `paranna_logic.py`
+  - `mine.py` + `mine_logic.py`
   - `stt.py` + `stt_logic.py`
   - `telkkari.py` + `telkkari_logic.py`
   - `tiivista.py` + `tiivista_logic.py`
@@ -44,7 +46,7 @@ When extending this project:
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig`, `CraftyConfig`).
 
 
 
