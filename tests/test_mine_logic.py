@@ -6,6 +6,7 @@ from urllib.error import HTTPError, URLError
 
 from bot.commands.mine_logic import (
     CraftyClient,
+    _format_memory,
     fetch_mine_status,
     parse_mine_command,
 )
@@ -34,6 +35,14 @@ class MineLogicTests(unittest.TestCase):
         self.assertEqual(parse_mine_command(""), (False, ""))
         self.assertEqual(parse_mine_command(None), (False, ""))
 
+    def test_format_memory(self) -> None:
+        self.assertIsNone(_format_memory(None))
+        self.assertEqual(_format_memory(331476992.0), "316.1 MB")
+        self.assertEqual(_format_memory(1073741824), "1.00 GB")
+        self.assertEqual(_format_memory("331476992.0"), "316.1 MB")
+        self.assertEqual(_format_memory("2.4 GB"), "2.4 GB")
+        self.assertEqual(_format_memory(0), "0 MB")
+
     def test_fetch_mine_status_not_configured(self) -> None:
         unconfigured = CraftyConfig(api_token="")
         reply = fetch_mine_status(unconfigured)
@@ -57,19 +66,21 @@ class MineLogicTests(unittest.TestCase):
             "players": ["Steve", "Alex", "Notch"],
             "cpu": 15.42,
             "mem_percent": 48.6,
-            "mem": "2.4 GB",
+            "mem": 331476992.0,
             "world_name": "world_survival",
             "motd": "Tervetuloa!",
         }
 
         reply = fetch_mine_status(self.config, client=client)
 
-        self.assertIn("⛏️ <b>Minecraft-palvelimet (Crafty Controller):</b>", reply)
-        self.assertIn("🟢 <b>Survival SMP</b>", reply)
+        self.assertIn("<b>Minecraft-palvelimet (Crafty Controller):</b>", reply)
+        self.assertNotIn("⛏️", reply)
+        self.assertNotIn("🟢", reply)
+        self.assertIn("<b>Survival SMP</b>", reply)
         self.assertIn("• Tila: Päällä", reply)
         self.assertIn("• Pelaajat: 3 / 20 (Steve, Alex, Notch)", reply)
         self.assertIn("• CPU: 15.4 %", reply)
-        self.assertIn("• RAM: 48.6 % (2.4 GB)", reply)
+        self.assertIn("• RAM: 316.1 MB (48.6 %)", reply)
         self.assertIn("• Versio: 1.20.4", reply)
         self.assertIn("• Portti: 25565", reply)
         self.assertIn("• Maailma: world_survival", reply)
@@ -93,7 +104,8 @@ class MineLogicTests(unittest.TestCase):
 
         reply = fetch_mine_status(self.config, client=client)
 
-        self.assertIn("🔴 <b>Creative Test</b>", reply)
+        self.assertNotIn("🔴", reply)
+        self.assertIn("<b>Creative Test</b>", reply)
         self.assertIn("• Tila: Pois päältä", reply)
         self.assertIn("• Pelaajat: 0 / 10", reply)
         self.assertNotIn("• CPU:", reply)
@@ -112,8 +124,8 @@ class MineLogicTests(unittest.TestCase):
 
         reply = fetch_mine_status(self.config, client=client)
 
-        self.assertIn("🟢 <b>Server One</b>", reply)
-        self.assertIn("🔴 <b>Server Two</b>", reply)
+        self.assertIn("<b>Server One</b>", reply)
+        self.assertIn("<b>Server Two</b>", reply)
 
     def test_fetch_mine_status_filtering_by_name(self) -> None:
         client = MagicMock(spec=CraftyClient)
@@ -139,7 +151,7 @@ class MineLogicTests(unittest.TestCase):
         ]
 
         reply = fetch_mine_status(self.config, server_query="hardcore", client=client)
-        self.assertIn("⚠️ Palvelinta 'hardcore' ei löytynyt Crafty Controllerista.", reply)
+        self.assertIn("Palvelinta 'hardcore' ei löytynyt Crafty Controllerista.", reply)
 
     def test_fetch_mine_status_default_server_id(self) -> None:
         cfg = CraftyConfig(

@@ -27,6 +27,30 @@ def parse_mine_command(text: str | None) -> tuple[bool, str]:
     return True, server_query
 
 
+def _format_memory(raw_mem: Any) -> str | None:
+    """Format memory value in bytes or numeric into human-readable MB/GB."""
+    if raw_mem is None:
+        return None
+    if isinstance(raw_mem, (int, float)):
+        val = float(raw_mem)
+        if val > 1024 * 100:  # Value is in bytes
+            mb = val / (1024 * 1024)
+            if mb >= 1024:
+                return f"{mb / 1024:.2f} GB"
+            return f"{mb:.1f} MB"
+        if val > 0:
+            return f"{val:.1f} MB"
+        return "0 MB"
+    if isinstance(raw_mem, str):
+        cleaned = raw_mem.strip()
+        try:
+            val = float(cleaned)
+            return _format_memory(val)
+        except ValueError:
+            return cleaned
+    return str(raw_mem)
+
+
 class CraftyClient:
     """Client for interacting with Crafty Controller REST API."""
 
@@ -88,7 +112,7 @@ class CraftyClient:
 
 
 def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
-    """Format individual server info and stats into HTML-formatted lines."""
+    """Format individual server info and stats into clean HTML-formatted lines."""
     server_id = (
         server.get("server_id")
         or server.get("server_uuid")
@@ -121,13 +145,10 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
 
     status_lower = str(status_val).strip().lower() if status_val else ""
     if is_running:
-        status_icon = "🟢"
         status_text = "Päällä"
     elif status_lower in ("starting", "restarting", "käynnistyy"):
-        status_icon = "🟡"
         status_text = "Käynnistyy"
     else:
-        status_icon = "🔴"
         status_text = "Pois päältä"
 
     # Players
@@ -165,9 +186,9 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
         players_display += f" ({', '.join(escaped_names)})"
 
     lines = [
-        f"{status_icon} <b>{server_name}</b>",
-        f"   • Tila: {status_text}",
-        f"   • Pelaajat: {players_display}",
+        f"<b>{server_name}</b>",
+        f"• Tila: {status_text}",
+        f"• Pelaajat: {players_display}",
     ]
 
     if is_running:
@@ -175,25 +196,28 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
         if cpu is not None:
             try:
                 cpu_float = float(cpu)
-                lines.append(f"   • CPU: {cpu_float:.1f} %")
+                lines.append(f"• CPU: {cpu_float:.1f} %")
             except (ValueError, TypeError):
-                lines.append(f"   • CPU: {html.escape(str(cpu))}")
+                lines.append(f"• CPU: {html.escape(str(cpu))}")
 
         mem_percent = stats.get("mem_percent") or stats.get("memory_percent")
         mem_usage = stats.get("mem") or stats.get("memory") or stats.get("mem_usage")
-        if mem_percent is not None:
+        formatted_mem = _format_memory(mem_usage)
+
+        if formatted_mem and mem_percent is not None:
             try:
                 mem_float = float(mem_percent)
-                if mem_usage:
-                    lines.append(
-                        f"   • RAM: {mem_float:.1f} % ({html.escape(str(mem_usage))})"
-                    )
-                else:
-                    lines.append(f"   • RAM: {mem_float:.1f} %")
+                lines.append(f"• RAM: {formatted_mem} ({mem_float:.1f} %)")
             except (ValueError, TypeError):
-                lines.append(f"   • RAM: {html.escape(str(mem_percent))}")
-        elif mem_usage:
-            lines.append(f"   • RAM: {html.escape(str(mem_usage))}")
+                lines.append(f"• RAM: {formatted_mem}")
+        elif formatted_mem:
+            lines.append(f"• RAM: {formatted_mem}")
+        elif mem_percent is not None:
+            try:
+                mem_float = float(mem_percent)
+                lines.append(f"• RAM: {mem_float:.1f} %")
+            except (ValueError, TypeError):
+                lines.append(f"• RAM: {html.escape(str(mem_percent))}")
 
         version = (
             stats.get("version")
@@ -202,7 +226,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or server.get("server_version")
         )
         if version:
-            lines.append(f"   • Versio: {html.escape(str(version))}")
+            lines.append(f"• Versio: {html.escape(str(version))}")
 
         port = (
             server.get("server_port")
@@ -211,7 +235,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or stats.get("port")
         )
         if port:
-            lines.append(f"   • Portti: {html.escape(str(port))}")
+            lines.append(f"• Portti: {html.escape(str(port))}")
 
         world = (
             stats.get("world_name")
@@ -219,8 +243,8 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or server.get("world_name")
             or server.get("world")
         )
-        if world:
-            lines.append(f"   • Maailma: {html.escape(str(world))}")
+        if world and str(world).strip() != str(raw_name).strip():
+            lines.append(f"• Maailma: {html.escape(str(world))}")
 
         motd = (
             stats.get("motd")
@@ -229,8 +253,12 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
             or server.get("motd")
             or server.get("desc")
         )
-        if motd:
-            lines.append(f"   • Kuvaus: {html.escape(str(motd))}")
+        if (
+            motd
+            and str(motd).strip() != str(raw_name).strip()
+            and str(motd).strip() != str(world).strip()
+        ):
+            lines.append(f"• Kuvaus: {html.escape(str(motd))}")
 
     return "\n".join(lines)
 
@@ -243,7 +271,7 @@ def fetch_mine_status(
     """Fetch status of Crafty Controller Minecraft servers and return formatted reply."""
     if not config.is_configured:
         return (
-            "⚠️ Crafty Controller -integraatiota ei ole määritetty "
+            "Crafty Controller -integraatiota ei ole määritetty "
             "(.env puuttuu CRAFTY_API_TOKEN)."
         )
 
@@ -255,19 +283,19 @@ def fetch_mine_status(
         LOGGER.warning("Crafty API HTTP error: %s", exc)
         if exc.code in (401, 403):
             return (
-                f"⚠️ Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
+                f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
                 "Tarkista CRAFTY_API_TOKEN."
             )
-        return f"⚠️ Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
     except URLError as exc:
         LOGGER.warning("Crafty API connection error: %s", exc)
-        return f"⚠️ Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
     except Exception as exc:
         LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
-        return f"⚠️ Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
 
     if not servers:
-        return "⚠️ Crafty Controllerista ei löytynyt yhtään palvelinta."
+        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
 
     # Filter servers if query is specified
     selected_servers: list[dict[str, Any]] = []
@@ -280,7 +308,7 @@ def fetch_mine_status(
                 selected_servers.append(s)
 
         if not selected_servers:
-            return f"⚠️ Palvelinta '{server_query}' ei löytynyt Crafty Controllerista."
+            return f"Palvelinta '{server_query}' ei löytynyt Crafty Controllerista."
     elif config.default_server_id:
         def_id = config.default_server_id.strip().casefold()
         for s in servers:
@@ -309,5 +337,5 @@ def fetch_mine_status(
 
         server_blocks.append(_format_server_block(server, stats))
 
-    header = "⛏️ <b>Minecraft-palvelimet (Crafty Controller):</b>\n\n"
+    header = "<b>Minecraft-palvelimet (Crafty Controller):</b>\n\n"
     return header + "\n\n".join(server_blocks)
