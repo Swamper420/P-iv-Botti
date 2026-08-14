@@ -189,9 +189,7 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
         players_display += " — <i>Aavemaisen hiljaista...</i>"
 
     lines = [
-        "╔══════════════════════════════════════╗",
-        f"  <b>{server_name}</b>",
-        "╚══════════════════════════════════════╝",
+        f"<b>{server_name}</b>",
         f"<code>» TILA:    </code> {status_text}",
         f"<code>» PELAAJAT:</code> {players_display}",
     ]
