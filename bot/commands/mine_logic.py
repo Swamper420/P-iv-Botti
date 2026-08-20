@@ -185,97 +185,80 @@ class CraftyClient:
         return {}
 
     def send_server_command(self, server_id: str | int, command: str) -> dict[str, Any]:
-        """Send a console command to a running server."""
+        """Send a console command to a running server via Crafty Controller stdin API.
+
+        The /api/v2/servers/{id}/stdin endpoint expects the raw command as plain
+        text in the request body (no JSON wrapper). This matches the Crafty 4 source:
+        svr.send_command(self.request.body.decode("utf-8"))
+        """
         cmd = command.strip()
         if cmd.startswith("/"):
             cmd = cmd[1:]
 
-        # In Crafty Controller, commands can be sent via:
-        # 1. POST /api/v2/servers/{server_id}/stdin
-        # 2. POST /api/v2/servers/{server_id}/command
-        # 3. POST /api/v2/servers/{server_id}/action/send_command
-        # 4. POST /api/v2/servers/{server_id}/action/stdin
-        endpoints = [
-            (f"/api/v2/servers/{server_id}/stdin", {"command": cmd}),
-            (f"/api/v2/servers/{server_id}/stdin", cmd),
-            (f"/api/v2/servers/{server_id}/command", {"command": cmd}),
-            (f"/api/v2/servers/{server_id}/command", cmd),
-            (f"/api/v2/servers/{server_id}/action/send_command", {"command": cmd}),
-            (f"/api/v2/servers/{server_id}/action/stdin", {"command": cmd}),
-        ]
-        last_exc: Exception | None = None
-        for endpoint, payload in endpoints:
-            try:
-                return self._request_json(endpoint, method="POST", payload=payload)
-            except HTTPError as exc:
-                last_exc = exc
-                if exc.code == 404:
-                    continue
-                raise
-            except Exception as exc:
-                last_exc = exc
-                continue
-
-        if last_exc:
-            raise last_exc
-        return {}
+        return self._request_json(
+            f"/api/v2/servers/{server_id}/stdin",
+            method="POST",
+            payload=cmd,
+            content_type="text/plain",
+        )
 
     def get_server_file(self, server_id: str | int, file_path: str) -> Any:
-        """Fetch file content from server."""
+        """Fetch file content from server via Crafty Controller files API.
+
+        The /api/v2/servers/{id}/files endpoint is a POST that accepts a JSON
+        body {"path": "<relative_or_absolute_path>"} and returns:
+        {"status": "ok", "data": {"content": "<file text>", "attributes": {...}}}
+        """
         clean_path = file_path.lstrip("/")
-        paths_to_try = [
-            f"/api/v2/servers/{server_id}/files?path={clean_path}",
-            f"/api/v2/servers/{server_id}/files?file={clean_path}",
-            f"/api/v2/servers/{server_id}/files/{clean_path}",
-            f"/api/v2/servers/{server_id}/files/raw?path={clean_path}",
-            f"/api/v2/servers/{server_id}/file?path={clean_path}",
-        ]
-        for p in paths_to_try:
-            try:
-                res = self._request_json(p)
-                if res:
-                    return res
-            except Exception:
-                continue
-        return None
+        try:
+            return self._request_json(
+                f"/api/v2/servers/{server_id}/files",
+                method="POST",
+                payload={"path": clean_path},
+            )
+        except Exception as exc:
+            LOGGER.debug("get_server_file failed for %s on server %s: %s", clean_path, server_id, exc)
+            return None
 
     def get_server_allowlist(self, server_id: str | int) -> list[str]:
-        """Retrieve allowlist player names for a server."""
+        """Retrieve allowlist player names for a server.
+
+        Crafty's files API response format:
+        {"status": "ok", "data": {"content": "<raw file text>", "attributes": {...}}}
+        The "content" field contains the raw JSON text of allowlist.json.
+        """
         for filename in ("allowlist.json", "whitelist.json"):
             try:
                 file_data = self.get_server_file(server_id, filename)
                 if not file_data:
                     continue
 
-                entries: list[Any] = []
-                if isinstance(file_data, list):
-                    entries = file_data
-                elif isinstance(file_data, dict):
+                # Extract the raw file content string from the Crafty API response
+                raw_content: str | None = None
+                if isinstance(file_data, dict):
+                    # Expected: {"status": "ok", "data": {"content": "..."}}
                     data_field = file_data.get("data")
-                    content_field = file_data.get("content") or file_data.get("file_content")
-                    if isinstance(data_field, list):
-                        entries = data_field
-                    elif isinstance(data_field, dict) and isinstance(data_field.get("content"), str):
-                        try:
-                            parsed = json.loads(data_field["content"])
-                            if isinstance(parsed, list):
-                                entries = parsed
-                        except Exception:
-                            pass
-                    elif isinstance(content_field, str):
-                        try:
-                            parsed = json.loads(content_field)
-                            if isinstance(parsed, list):
-                                entries = parsed
-                        except Exception:
-                            pass
-                elif isinstance(file_data, str) and file_data.strip():
-                    try:
-                        parsed = json.loads(file_data)
-                        if isinstance(parsed, list):
-                            entries = parsed
-                    except Exception:
-                        pass
+                    if isinstance(data_field, dict):
+                        raw_content = data_field.get("content")
+                    elif isinstance(data_field, str):
+                        raw_content = data_field
+                    # Fallback: content directly at top level
+                    if raw_content is None:
+                        raw_content = file_data.get("content")
+                elif isinstance(file_data, str):
+                    raw_content = file_data
+
+                if not raw_content:
+                    continue
+
+                # Parse the JSON content of the allowlist file
+                entries: list[Any] = []
+                try:
+                    parsed = json.loads(raw_content)
+                    if isinstance(parsed, list):
+                        entries = parsed
+                except Exception:
+                    pass
 
                 names: list[str] = []
                 for item in entries:

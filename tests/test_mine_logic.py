@@ -411,32 +411,28 @@ class MineLogicTests(unittest.TestCase):
             mock_req.assert_called_once_with(
                 "/api/v2/servers/1/stdin",
                 method="POST",
-                payload={"command": "allowlist add Steve"},
+                payload="allowlist add Steve",
+                content_type="text/plain",
             )
 
-    def test_crafty_client_send_server_command_fallback(self) -> None:
+    def test_crafty_client_send_server_command_raises_on_error(self) -> None:
         client = CraftyClient(self.config)
-        err = HTTPError(url="", code=404, msg="Not Found", hdrs=MagicMock(), fp=None)
-        with patch.object(
-            client, "_request_json", side_effect=[err, err, {"status": "ok"}]
-        ) as mock_req:
-            client.send_server_command("1", "allowlist add Steve")
-            self.assertEqual(mock_req.call_count, 3)
-            mock_req.assert_called_with(
-                "/api/v2/servers/1/command",
-                method="POST",
-                payload={"command": "allowlist add Steve"},
-            )
+        err = HTTPError(url="", code=500, msg="Server Error", hdrs=MagicMock(), fp=None)
+        with patch.object(client, "_request_json", side_effect=err):
+            with self.assertRaises(HTTPError):
+                client.send_server_command("1", "allowlist add Steve")
 
     def test_crafty_client_get_server_allowlist(self) -> None:
         client = CraftyClient(self.config)
+        # Crafty API response: {"status": "ok", "data": {"content": "<raw json text>"}}
+        allowlist_json = json.dumps([
+            {"name": "BedrockGamer1", "xuid": "123456"},
+            {"name": "BedrockGamer2", "xuid": "789101"},
+        ])
         with patch.object(
             client,
             "get_server_file",
-            return_value=[
-                {"name": "BedrockGamer1", "xuid": "123456"},
-                {"name": "BedrockGamer2", "xuid": "789101"},
-            ],
+            return_value={"status": "ok", "data": {"content": allowlist_json}},
         ):
             names = client.get_server_allowlist("1")
             self.assertEqual(names, ["BedrockGamer1", "BedrockGamer2"])
