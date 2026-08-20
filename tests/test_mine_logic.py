@@ -409,21 +409,21 @@ class MineLogicTests(unittest.TestCase):
         with patch.object(client, "_request_json", return_value={"status": "ok"}) as mock_req:
             client.send_server_command("1", "/allowlist add Steve")
             mock_req.assert_called_once_with(
-                "/api/v2/servers/1/action/stdin",
+                "/api/v2/servers/1/stdin",
                 method="POST",
-                payload="allowlist add Steve",
+                payload={"command": "allowlist add Steve"},
             )
 
     def test_crafty_client_send_server_command_fallback(self) -> None:
         client = CraftyClient(self.config)
         err = HTTPError(url="", code=404, msg="Not Found", hdrs=MagicMock(), fp=None)
         with patch.object(
-            client, "_request_json", side_effect=[err, {"status": "ok"}]
+            client, "_request_json", side_effect=[err, err, {"status": "ok"}]
         ) as mock_req:
             client.send_server_command("1", "allowlist add Steve")
-            self.assertEqual(mock_req.call_count, 2)
+            self.assertEqual(mock_req.call_count, 3)
             mock_req.assert_called_with(
-                "/api/v2/servers/1/action/send_command",
+                "/api/v2/servers/1/command",
                 method="POST",
                 payload={"command": "allowlist add Steve"},
             )
@@ -440,6 +440,7 @@ class MineLogicTests(unittest.TestCase):
         ):
             names = client.get_server_allowlist("1")
             self.assertEqual(names, ["BedrockGamer1", "BedrockGamer2"])
+
 
     def test_crafty_client_request_json_with_urlopen(self) -> None:
         client = CraftyClient(

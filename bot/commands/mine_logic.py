@@ -190,44 +190,28 @@ class CraftyClient:
         if cmd.startswith("/"):
             cmd = cmd[1:]
 
-        # In Crafty Controller API v2:
-        # POST /api/v2/servers/{server_id}/action/stdin
-        # The body is either raw text or {"command": cmd}
-        # First try raw text to action/stdin, then try JSON payload
-        try:
-            return self._request_json(
-                f"/api/v2/servers/{server_id}/action/stdin",
-                method="POST",
-                payload=cmd,
-            )
-        except HTTPError as exc:
-            if exc.code == 404:
-                # If action/stdin is 404, try action/send_command
-                return self._request_json(
-                    f"/api/v2/servers/{server_id}/action/send_command",
-                    method="POST",
-                    payload={"command": cmd},
-                )
-            raise
-
-    def get_server_file(self, server_id: str | int, file_path: str) -> Any:
-        """Fetch file content from server. Tries various Crafty file query endpoints."""
-        clean_path = file_path.lstrip("/")
-        # Try /api/v2/servers/{server_id}/files?path={clean_path}
-        # and /api/v2/servers/{server_id}/files/{clean_path}
-        # and /api/v2/servers/{server_id}/file?path={clean_path}
-        paths_to_try = [
-            f"/api/v2/servers/{server_id}/files?path={clean_path}",
-            f"/api/v2/servers/{server_id}/files?file={clean_path}",
-            f"/api/v2/servers/{server_id}/files/{clean_path}",
-            f"/api/v2/servers/{server_id}/file?path={clean_path}",
+        # In Crafty Controller, commands can be sent via:
+        # 1. POST /api/v2/servers/{server_id}/stdin
+        # 2. POST /api/v2/servers/{server_id}/command
+        # 3. POST /api/v2/servers/{server_id}/action/send_command
+        # 4. POST /api/v2/servers/{server_id}/action/stdin
+        endpoints = [
+            (f"/api/v2/servers/{server_id}/stdin", {"command": cmd}),
+            (f"/api/v2/servers/{server_id}/stdin", cmd),
+            (f"/api/v2/servers/{server_id}/command", {"command": cmd}),
+            (f"/api/v2/servers/{server_id}/command", cmd),
+            (f"/api/v2/servers/{server_id}/action/send_command", {"command": cmd}),
+            (f"/api/v2/servers/{server_id}/action/stdin", {"command": cmd}),
         ]
         last_exc: Exception | None = None
-        for p in paths_to_try:
+        for endpoint, payload in endpoints:
             try:
-                res = self._request_json(p)
-                if res:
-                    return res
+                return self._request_json(endpoint, method="POST", payload=payload)
+            except HTTPError as exc:
+                last_exc = exc
+                if exc.code == 404:
+                    continue
+                raise
             except Exception as exc:
                 last_exc = exc
                 continue
@@ -236,11 +220,33 @@ class CraftyClient:
             raise last_exc
         return {}
 
+    def get_server_file(self, server_id: str | int, file_path: str) -> Any:
+        """Fetch file content from server."""
+        clean_path = file_path.lstrip("/")
+        paths_to_try = [
+            f"/api/v2/servers/{server_id}/files?path={clean_path}",
+            f"/api/v2/servers/{server_id}/files?file={clean_path}",
+            f"/api/v2/servers/{server_id}/files/{clean_path}",
+            f"/api/v2/servers/{server_id}/files/raw?path={clean_path}",
+            f"/api/v2/servers/{server_id}/file?path={clean_path}",
+        ]
+        for p in paths_to_try:
+            try:
+                res = self._request_json(p)
+                if res:
+                    return res
+            except Exception:
+                continue
+        return None
+
     def get_server_allowlist(self, server_id: str | int) -> list[str]:
         """Retrieve allowlist player names for a server."""
         for filename in ("allowlist.json", "whitelist.json"):
             try:
                 file_data = self.get_server_file(server_id, filename)
+                if not file_data:
+                    continue
+
                 entries: list[Any] = []
                 if isinstance(file_data, list):
                     entries = file_data
@@ -285,6 +291,7 @@ class CraftyClient:
                 LOGGER.debug("Could not read %s for server %s: %s", filename, server_id, exc)
 
         return []
+
 
 
     def add_to_allowlist(self, server_id: str | int, player_name: str) -> bool:
