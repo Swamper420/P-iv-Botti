@@ -151,9 +151,9 @@ class CraftyClient:
             return status, raw_text, parsed_json
 
     def _request_json(
-        self, path: str, method: str = "GET", payload: Any = None
+        self, path: str, method: str = "GET", payload: Any = None, content_type: str = "application/json"
     ) -> Any:
-        _, raw_text, parsed_json = self._request(path, method=method, payload=payload)
+        _, raw_text, parsed_json = self._request(path, method=method, payload=payload, content_type=content_type)
         if parsed_json is not None:
             return parsed_json
         return raw_text
