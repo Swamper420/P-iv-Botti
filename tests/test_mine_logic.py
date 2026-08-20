@@ -409,9 +409,9 @@ class MineLogicTests(unittest.TestCase):
         with patch.object(client, "_request_json", return_value={"status": "ok"}) as mock_req:
             client.send_server_command("1", "/allowlist add Steve")
             mock_req.assert_called_once_with(
-                "/api/v2/servers/1/action/send_command",
+                "/api/v2/servers/1/action/stdin",
                 method="POST",
-                payload={"command": "allowlist add Steve"},
+                payload="allowlist add Steve",
             )
 
     def test_crafty_client_send_server_command_fallback(self) -> None:
@@ -423,7 +423,7 @@ class MineLogicTests(unittest.TestCase):
             client.send_server_command("1", "allowlist add Steve")
             self.assertEqual(mock_req.call_count, 2)
             mock_req.assert_called_with(
-                "/api/v2/servers/1/action/stdin",
+                "/api/v2/servers/1/action/send_command",
                 method="POST",
                 payload={"command": "allowlist add Steve"},
             )
@@ -466,4 +466,5 @@ class MineLogicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

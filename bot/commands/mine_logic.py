@@ -110,28 +110,53 @@ class CraftyClient:
             return ssl.create_default_context()
         return None
 
-    def _request_json(
-        self, path: str, method: str = "GET", payload: dict[str, Any] | None = None
-    ) -> Any:
+    def _request(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Any = None,
+        content_type: str = "application/json",
+    ) -> tuple[int, str, Any]:
+        """Perform HTTP request against Crafty Controller API."""
         url = f"{self.base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self.api_token}",
-            "Accept": "application/json",
+            "Accept": "application/json, text/plain, */*",
             "User-Agent": "P-iv-Botti/1.0",
         }
         data_bytes: bytes | None = None
         if payload is not None:
-            headers["Content-Type"] = "application/json"
-            data_bytes = json.dumps(payload).encode("utf-8")
+            if isinstance(payload, (dict, list)):
+                headers["Content-Type"] = "application/json"
+                data_bytes = json.dumps(payload).encode("utf-8")
+            elif isinstance(payload, str):
+                headers["Content-Type"] = content_type
+                data_bytes = payload.encode("utf-8")
+            elif isinstance(payload, bytes):
+                headers["Content-Type"] = content_type
+                data_bytes = payload
 
         req = Request(url, headers=headers, data=data_bytes, method=method)
         ssl_ctx = self._create_ssl_context()
 
         with urlopen(req, timeout=self.timeout_seconds, context=ssl_ctx) as response:
-            data = response.read().decode("utf-8")
-            if not data.strip():
-                return {}
-            return json.loads(data)
+            status = getattr(response, "status", 200)
+            raw_text = response.read().decode("utf-8", errors="replace")
+            parsed_json: Any = None
+            if raw_text.strip():
+                try:
+                    parsed_json = json.loads(raw_text)
+                except Exception:
+                    parsed_json = None
+            return status, raw_text, parsed_json
+
+    def _request_json(
+        self, path: str, method: str = "GET", payload: Any = None
+    ) -> Any:
+        _, raw_text, parsed_json = self._request(path, method=method, payload=payload)
+        if parsed_json is not None:
+            return parsed_json
+        return raw_text
 
     def get_servers(self) -> list[dict[str, Any]]:
         """Fetch list of all servers managed by Crafty Controller."""
@@ -165,50 +190,86 @@ class CraftyClient:
         if cmd.startswith("/"):
             cmd = cmd[1:]
 
-        # Try POST /api/v2/servers/{server_id}/action/send_command first
-        payload = {"command": cmd}
+        # In Crafty Controller API v2:
+        # POST /api/v2/servers/{server_id}/action/stdin
+        # The body is either raw text or {"command": cmd}
+        # First try raw text to action/stdin, then try JSON payload
         try:
             return self._request_json(
-                f"/api/v2/servers/{server_id}/action/send_command",
+                f"/api/v2/servers/{server_id}/action/stdin",
                 method="POST",
-                payload=payload,
+                payload=cmd,
             )
         except HTTPError as exc:
             if exc.code == 404:
-                # Fallback to stdin action endpoint if available
+                # If action/stdin is 404, try action/send_command
                 return self._request_json(
-                    f"/api/v2/servers/{server_id}/action/stdin",
+                    f"/api/v2/servers/{server_id}/action/send_command",
                     method="POST",
-                    payload=payload,
+                    payload={"command": cmd},
                 )
             raise
 
     def get_server_file(self, server_id: str | int, file_path: str) -> Any:
-        """Fetch file content or metadata from a server via Crafty files endpoint."""
+        """Fetch file content from server. Tries various Crafty file query endpoints."""
         clean_path = file_path.lstrip("/")
-        return self._request_json(f"/api/v2/servers/{server_id}/files/{clean_path}")
+        # Try /api/v2/servers/{server_id}/files?path={clean_path}
+        # and /api/v2/servers/{server_id}/files/{clean_path}
+        # and /api/v2/servers/{server_id}/file?path={clean_path}
+        paths_to_try = [
+            f"/api/v2/servers/{server_id}/files?path={clean_path}",
+            f"/api/v2/servers/{server_id}/files?file={clean_path}",
+            f"/api/v2/servers/{server_id}/files/{clean_path}",
+            f"/api/v2/servers/{server_id}/file?path={clean_path}",
+        ]
+        last_exc: Exception | None = None
+        for p in paths_to_try:
+            try:
+                res = self._request_json(p)
+                if res:
+                    return res
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if last_exc:
+            raise last_exc
+        return {}
 
     def get_server_allowlist(self, server_id: str | int) -> list[str]:
-        """Retrieve allowlist player names for a server.
-
-        Checks allowlist.json (Bedrock) or whitelist.json.
-        """
+        """Retrieve allowlist player names for a server."""
         for filename in ("allowlist.json", "whitelist.json"):
             try:
                 file_data = self.get_server_file(server_id, filename)
-                entries = []
+                entries: list[Any] = []
                 if isinstance(file_data, list):
                     entries = file_data
                 elif isinstance(file_data, dict):
-                    if isinstance(file_data.get("data"), list):
-                        entries = file_data["data"]
-                    elif isinstance(file_data.get("content"), str):
+                    data_field = file_data.get("data")
+                    content_field = file_data.get("content") or file_data.get("file_content")
+                    if isinstance(data_field, list):
+                        entries = data_field
+                    elif isinstance(data_field, dict) and isinstance(data_field.get("content"), str):
                         try:
-                            parsed = json.loads(file_data["content"])
+                            parsed = json.loads(data_field["content"])
                             if isinstance(parsed, list):
                                 entries = parsed
                         except Exception:
                             pass
+                    elif isinstance(content_field, str):
+                        try:
+                            parsed = json.loads(content_field)
+                            if isinstance(parsed, list):
+                                entries = parsed
+                        except Exception:
+                            pass
+                elif isinstance(file_data, str) and file_data.strip():
+                    try:
+                        parsed = json.loads(file_data)
+                        if isinstance(parsed, list):
+                            entries = parsed
+                    except Exception:
+                        pass
 
                 names: list[str] = []
                 for item in entries:
@@ -224,6 +285,7 @@ class CraftyClient:
                 LOGGER.debug("Could not read %s for server %s: %s", filename, server_id, exc)
 
         return []
+
 
     def add_to_allowlist(self, server_id: str | int, player_name: str) -> bool:
         """Add a player to Bedrock allowlist using allowlist add."""
