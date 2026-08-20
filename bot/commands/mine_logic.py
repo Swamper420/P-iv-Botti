@@ -629,7 +629,7 @@ def add_mine_allowlist(
     if not clean_name:
         return "Määritä pelaajanimi: <code>!mine allowlist add &lt;pelaajanimi&gt;</code>"
 
-    if not _PLAYER_NAME_RE.match(clean_name):
+    if not _PLAYER_NAME_RE.fullmatch(clean_name):
         return (
             f"Virheellinen pelaajanimi '<b>{html.escape(clean_name)}</b>'. "
             "Bedrock-gamertag voi sisältää kirjaimia, numeroita, välilyöntejä ja alaviivoja (1-32 merkkiä)."
