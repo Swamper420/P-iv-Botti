@@ -9,10 +9,10 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks
-from bot.commands.mine_logic import fetch_mine_status, parse_mine_command
+from bot.commands.mine_logic import handle_mine_command, parse_mine_command
 from bot.config import BotConfig
 
-COMMAND_USAGE = "!mine | !mine <palvelin>"
+COMMAND_USAGE = "!mine | !mine <palvelin> | !mine allowlist [palvelin] | !mine allowlist add [palvelin] <pelaaja>"
 
 
 def _build_handler(
@@ -26,7 +26,7 @@ def _build_handler(
         if message is None or not message.text:
             return
 
-        is_match, server_query = parse_mine_command(message.text)
+        is_match, _, _, _ = parse_mine_command(message.text)
         if not is_match:
             return
 
@@ -36,7 +36,7 @@ def _build_handler(
             )
 
         reply_text = await asyncio.to_thread(
-            fetch_mine_status, config.crafty, server_query
+            handle_mine_command, config.crafty, message.text
         )
 
         if reply_text:
@@ -54,3 +54,4 @@ def register(application: Application, config: BotConfig) -> None:
             _build_handler(config),
         )
     )
+

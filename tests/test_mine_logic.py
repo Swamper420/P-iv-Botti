@@ -7,7 +7,10 @@ from urllib.error import HTTPError, URLError
 from bot.commands.mine_logic import (
     CraftyClient,
     _format_memory,
+    add_mine_allowlist,
+    fetch_mine_allowlist,
     fetch_mine_status,
+    handle_mine_command,
     parse_mine_command,
 )
 from bot.config import CraftyConfig
@@ -23,17 +26,55 @@ class MineLogicTests(unittest.TestCase):
         )
 
     def test_parse_mine_command(self) -> None:
-        self.assertEqual(parse_mine_command("!mine"), (True, ""))
-        self.assertEqual(parse_mine_command("!mine   "), (True, ""))
-        self.assertEqual(parse_mine_command("  !mine   "), (True, ""))
-        self.assertEqual(parse_mine_command("!MINE survival"), (True, "survival"))
-        self.assertEqual(parse_mine_command("!mine 1"), (True, "1"))
-        self.assertEqual(parse_mine_command("!mine server-uuid-123"), (True, "server-uuid-123"))
-        self.assertEqual(parse_mine_command("!miner"), (False, ""))
-        self.assertEqual(parse_mine_command("!mineraali"), (False, ""))
-        self.assertEqual(parse_mine_command("mine"), (False, ""))
-        self.assertEqual(parse_mine_command(""), (False, ""))
-        self.assertEqual(parse_mine_command(None), (False, ""))
+        self.assertEqual(parse_mine_command("!mine"), (True, "status", "", ""))
+        self.assertEqual(parse_mine_command("!mine   "), (True, "status", "", ""))
+        self.assertEqual(parse_mine_command("  !mine   "), (True, "status", "", ""))
+        self.assertEqual(parse_mine_command("!MINE survival"), (True, "status", "survival", ""))
+        self.assertEqual(parse_mine_command("!mine 1"), (True, "status", "1", ""))
+        self.assertEqual(
+            parse_mine_command("!mine server-uuid-123"), (True, "status", "server-uuid-123", "")
+        )
+
+        # Allowlist list subcommands
+        self.assertEqual(parse_mine_command("!mine allowlist"), (True, "allowlist_list", "", ""))
+        self.assertEqual(parse_mine_command("!mine whitelist"), (True, "allowlist_list", "", ""))
+        self.assertEqual(parse_mine_command("!mine sallitut"), (True, "allowlist_list", "", ""))
+        self.assertEqual(
+            parse_mine_command("!mine allowlist bedrock"), (True, "allowlist_list", "bedrock", "")
+        )
+        self.assertEqual(
+            parse_mine_command("!mine allowlist list survival"),
+            (True, "allowlist_list", "survival", ""),
+        )
+
+        # Allowlist add subcommands
+        self.assertEqual(
+            parse_mine_command("!mine allowlist add Notch"),
+            (True, "allowlist_add", "", "Notch"),
+        )
+        self.assertEqual(
+            parse_mine_command("!mine whitelist lisaa Steve"),
+            (True, "allowlist_add", "", "Steve"),
+        )
+        self.assertEqual(
+            parse_mine_command("!mine allowlist add bedrock Alex"),
+            (True, "allowlist_add", "bedrock", "Alex"),
+        )
+        self.assertEqual(
+            parse_mine_command("!mine allowlist add Xbox Gamertag 123"),
+            (True, "allowlist_add", "Xbox", "Gamertag 123"),
+        )
+        self.assertEqual(
+            parse_mine_command("!mine allowlist add"),
+            (True, "allowlist_add", "", ""),
+        )
+
+        # Invalid matches
+        self.assertEqual(parse_mine_command("!miner"), (False, "", "", ""))
+        self.assertEqual(parse_mine_command("!mineraali"), (False, "", "", ""))
+        self.assertEqual(parse_mine_command("mine"), (False, "", "", ""))
+        self.assertEqual(parse_mine_command(""), (False, "", "", ""))
+        self.assertEqual(parse_mine_command(None), (False, "", "", ""))
 
     def test_format_memory(self) -> None:
         self.assertIsNone(_format_memory(None))
@@ -226,6 +267,81 @@ class MineLogicTests(unittest.TestCase):
         reply = fetch_mine_status(self.config, client=client)
         self.assertIn("Yhteysvirhe Crafty Controlleriin: Connection refused", reply)
 
+    def test_fetch_mine_allowlist_success(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bedrock-1", "server_name": "Bedrock Realm"}
+        ]
+        client.get_server_allowlist.return_value = ["PlayerOne", "PlayerTwo"]
+
+        reply = fetch_mine_allowlist(self.config, client=client)
+        self.assertIn("<b>Bedrock Realm</b>", reply)
+        self.assertIn("Sallitut pelaajat (2):", reply)
+        self.assertIn("• <b>PlayerOne</b>", reply)
+        self.assertIn("• <b>PlayerTwo</b>", reply)
+
+    def test_fetch_mine_allowlist_empty(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bedrock-1", "server_name": "Bedrock Realm"}
+        ]
+        client.get_server_allowlist.return_value = []
+
+        reply = fetch_mine_allowlist(self.config, client=client)
+        self.assertIn("<b>Bedrock Realm</b>", reply)
+        self.assertIn("Allowlist on tyhjä tai sitä ei saatu luettua", reply)
+        self.assertIn("!mine allowlist add", reply)
+
+    def test_add_mine_allowlist_success(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bedrock-1", "server_name": "Bedrock Realm"}
+        ]
+
+        reply = add_mine_allowlist(self.config, player_name="GamerTag 123", client=client)
+        client.add_to_allowlist.assert_called_once_with("bedrock-1", "GamerTag 123")
+        self.assertIn("✅ Pelaaja <b>GamerTag 123</b> lisätty palvelimen <b>Bedrock Realm</b>", reply)
+        self.assertIn("allowlist add", reply)
+
+    def test_add_mine_allowlist_missing_name(self) -> None:
+        reply = add_mine_allowlist(self.config, player_name="")
+        self.assertIn("Määritä pelaajanimi", reply)
+
+    def test_add_mine_allowlist_invalid_characters(self) -> None:
+        reply = add_mine_allowlist(self.config, player_name="Invalid;Name!")
+        self.assertIn("Virheellinen pelaajanimi", reply)
+
+    def test_add_mine_allowlist_command_failure(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bedrock-1", "server_name": "Bedrock Realm"}
+        ]
+        client.add_to_allowlist.side_effect = HTTPError(
+            url="http://localhost", code=500, msg="Server error", hdrs=MagicMock(), fp=None
+        )
+
+        reply = add_mine_allowlist(self.config, player_name="ValidPlayer", client=client)
+        self.assertIn("❌ Komennon suoritus epäonnistui palvelimella <b>Bedrock Realm</b>", reply)
+
+    def test_handle_mine_command_routing(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "1", "server_name": "Bedrock Realm"}
+        ]
+        client.get_server_stats.return_value = {"running": True, "online": 0}
+        client.get_server_allowlist.return_value = ["Steve"]
+
+        status_reply = handle_mine_command(self.config, "!mine", client=client)
+        self.assertIn("<b>Bedrock Realm</b>", status_reply)
+        self.assertIn("» TILA:", status_reply)
+
+        list_reply = handle_mine_command(self.config, "!mine allowlist", client=client)
+        self.assertIn("Sallitut pelaajat (1):", list_reply)
+        self.assertIn("Steve", list_reply)
+
+        add_reply = handle_mine_command(self.config, "!mine allowlist add Alex", client=client)
+        self.assertIn("✅ Pelaaja <b>Alex</b> lisätty", add_reply)
+
     def test_html_escaping_in_status_output(self) -> None:
         client = MagicMock(spec=CraftyClient)
         client.get_servers.return_value = [
@@ -288,6 +404,43 @@ class MineLogicTests(unittest.TestCase):
         ):
             self.assertEqual(client.get_server_stats("2"), {"running": False})
 
+    def test_crafty_client_send_server_command(self) -> None:
+        client = CraftyClient(self.config)
+        with patch.object(client, "_request_json", return_value={"status": "ok"}) as mock_req:
+            client.send_server_command("1", "/allowlist add Steve")
+            mock_req.assert_called_once_with(
+                "/api/v2/servers/1/action/send_command",
+                method="POST",
+                payload={"command": "allowlist add Steve"},
+            )
+
+    def test_crafty_client_send_server_command_fallback(self) -> None:
+        client = CraftyClient(self.config)
+        err = HTTPError(url="", code=404, msg="Not Found", hdrs=MagicMock(), fp=None)
+        with patch.object(
+            client, "_request_json", side_effect=[err, {"status": "ok"}]
+        ) as mock_req:
+            client.send_server_command("1", "allowlist add Steve")
+            self.assertEqual(mock_req.call_count, 2)
+            mock_req.assert_called_with(
+                "/api/v2/servers/1/action/stdin",
+                method="POST",
+                payload={"command": "allowlist add Steve"},
+            )
+
+    def test_crafty_client_get_server_allowlist(self) -> None:
+        client = CraftyClient(self.config)
+        with patch.object(
+            client,
+            "get_server_file",
+            return_value=[
+                {"name": "BedrockGamer1", "xuid": "123456"},
+                {"name": "BedrockGamer2", "xuid": "789101"},
+            ],
+        ):
+            names = client.get_server_allowlist("1")
+            self.assertEqual(names, ["BedrockGamer1", "BedrockGamer2"])
+
     def test_crafty_client_request_json_with_urlopen(self) -> None:
         client = CraftyClient(
             CraftyConfig(
@@ -313,3 +466,4 @@ class MineLogicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
