@@ -277,6 +277,33 @@ class CraftyClient:
 
 
 
+    def get_online_players(self, server_id: str | int) -> list[str]:
+        """Fetch online player names for a running server.
+
+        Tries the Crafty /api/v2/servers/{id}/stats endpoint first (the
+        ``players`` field) and falls back to reading the ``log.log`` or
+        sending the ``list`` console command if the field is missing.
+        """
+        # Primary: stats may already contain a player list
+        try:
+            stats = self.get_server_stats(server_id)
+            player_list = stats.get("players") or stats.get("player_list") or []
+            names: list[str] = []
+            if isinstance(player_list, list):
+                for p in player_list:
+                    if isinstance(p, dict):
+                        name = p.get("name") or p.get("username")
+                        if name:
+                            names.append(str(name))
+                    elif isinstance(p, str) and p.strip():
+                        names.append(p.strip())
+            if names:
+                return names
+        except Exception as exc:
+            LOGGER.debug("get_online_players stats lookup failed for server %s: %s", server_id, exc)
+
+        return []
+
     def add_to_allowlist(self, server_id: str | int, player_name: str) -> bool:
         """Add a player to Bedrock allowlist using allowlist add."""
         # For Bedrock Dedicated Server / Crafty Bedrock:
@@ -291,7 +318,11 @@ class CraftyClient:
         return True
 
 
-def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
+def _format_server_block(
+    server: dict[str, Any],
+    stats: dict[str, Any],
+    online_player_names: list[str] | None = None,
+) -> str:
     """Format individual server info and stats with stylized crazy formatting and gamer flavor."""
     server_id = (
         server.get("server_id")
@@ -353,6 +384,10 @@ def _format_server_block(server: dict[str, Any], stats: dict[str, Any]) -> str:
                     player_names.append(str(p_name))
             elif isinstance(p, str) and p.strip():
                 player_names.append(p.strip())
+
+    # Use explicitly fetched online player names when stats didn't include them
+    if not player_names and online_player_names:
+        player_names = list(online_player_names)
 
     count_val = online_players or 0
     if max_players is not None:
@@ -528,13 +563,26 @@ def fetch_mine_status(
             or server.get("id")
         )
         stats: dict[str, Any] = {}
+        online_player_names: list[str] = []
         if s_id is not None:
             try:
                 stats = client.get_server_stats(s_id)
             except Exception as exc:
                 LOGGER.warning("Failed to fetch stats for server %s: %s", s_id, exc)
 
-        server_blocks.append(_format_server_block(server, stats))
+            # Fetch online player names when the stats don't include them
+            has_players_in_stats = bool(
+                stats.get("players") or stats.get("player_list")
+            )
+            if not has_players_in_stats:
+                try:
+                    online_player_names = client.get_online_players(s_id)
+                except Exception as exc:
+                    LOGGER.debug("Failed to fetch online players for server %s: %s", s_id, exc)
+
+        server_blocks.append(
+            _format_server_block(server, stats, online_player_names)
+        )
 
     return "\n\n".join(server_blocks)
 
