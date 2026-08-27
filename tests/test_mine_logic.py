@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from bot.commands.mine_logic import (
     CraftyClient,
     _format_memory,
+    _parse_players_field,
     add_mine_allowlist,
     fetch_mine_allowlist,
     fetch_mine_status,
@@ -84,6 +85,35 @@ class MineLogicTests(unittest.TestCase):
         self.assertEqual(_format_memory("2.4 GB"), "2.4 GB")
         self.assertEqual(_format_memory(0), "0 MB")
 
+    def test_parse_players_field(self) -> None:
+        # None / empty
+        self.assertEqual(_parse_players_field(None), [])
+        self.assertEqual(_parse_players_field(""), [])
+        self.assertEqual(_parse_players_field("[]"), [])
+
+        # JSON-encoded string (as Crafty API actually returns)
+        self.assertEqual(
+            _parse_players_field('["Steve", "Alex"]'),
+            ["Steve", "Alex"],
+        )
+        self.assertEqual(
+            _parse_players_field('[{"name": "Notch"}]'),
+            ["Notch"],
+        )
+
+        # Already a Python list
+        self.assertEqual(
+            _parse_players_field(["Steve", "Alex"]),
+            ["Steve", "Alex"],
+        )
+        self.assertEqual(
+            _parse_players_field([{"name": "Notch"}]),
+            ["Notch"],
+        )
+
+        # Invalid JSON string
+        self.assertEqual(_parse_players_field("not json"), [])
+
     def test_fetch_mine_status_not_configured(self) -> None:
         unconfigured = CraftyConfig(api_token="")
         reply = fetch_mine_status(unconfigured)
@@ -145,11 +175,12 @@ class MineLogicTests(unittest.TestCase):
                 "server_port": 25565,
             }
         ]
-        # Stats have an online count but no players list
+        # Stats have an online count but players is empty JSON string (as Crafty returns)
         client.get_server_stats.return_value = {
             "running": True,
             "online": 2,
             "max_players": 20,
+            "players": "[]",
         }
         client.get_online_players.return_value = ["Steve", "Alex"]
 
@@ -158,8 +189,27 @@ class MineLogicTests(unittest.TestCase):
         client.get_online_players.assert_called_once_with("uuid-1")
         self.assertIn("(Steve, Alex)", reply)
 
+    def test_fetch_mine_status_players_json_string(self) -> None:
+        """Crafty returns players as a JSON-encoded string; verify it gets parsed."""
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "uuid-1", "server_name": "Survival SMP"}
+        ]
+        client.get_server_stats.return_value = {
+            "running": True,
+            "online": 2,
+            "max_players": 20,
+            "players": '["Steve", "Alex"]',
+        }
+
+        reply = fetch_mine_status(self.config, client=client)
+
+        # Players came from stats, so get_online_players should NOT be called
+        client.get_online_players.assert_not_called()
+        self.assertIn("(Steve, Alex)", reply)
+
     def test_fetch_mine_status_skips_online_players_when_stats_have_them(self) -> None:
-        """When stats already include players, get_online_players is not called."""
+        """When stats already include players (as list), get_online_players is not called."""
         client = MagicMock(spec=CraftyClient)
         client.get_servers.return_value = [
             {"server_id": "uuid-1", "server_name": "Survival SMP"}
@@ -500,6 +550,53 @@ class MineLogicTests(unittest.TestCase):
             req = mock_urlopen.call_args[0][0]
             self.assertEqual(req.full_url, "https://localhost:8443/api/v2/servers")
             self.assertEqual(req.headers.get("Authorization"), "Bearer my-token")
+
+    def test_crafty_client_get_online_players_from_stats_json_string(self) -> None:
+        """get_online_players parses players from a JSON-encoded string in stats."""
+        client = CraftyClient(self.config)
+        with patch.object(
+            client,
+            "get_server_stats",
+            return_value={"running": True, "online": 2, "players": '["Steve", "Alex"]'},
+        ):
+            names = client.get_online_players("1")
+            self.assertEqual(names, ["Steve", "Alex"])
+
+    def test_crafty_client_get_online_players_falls_back_to_list_command(self) -> None:
+        """When stats players is empty, sends 'list' command and parses logs."""
+        client = CraftyClient(self.config)
+        with patch.object(
+            client,
+            "get_server_stats",
+            return_value={"running": True, "online": 1, "players": "[]"},
+        ), patch.object(
+            client, "send_server_command"
+        ) as mock_cmd, patch.object(
+            client,
+            "get_server_logs",
+            return_value=[
+                "[INFO] Some other log line",
+                "[INFO] There are 1/10 players online:",
+                "[INFO] Gamer123",
+            ],
+        ), patch("bot.commands.mine_logic.time.sleep"):
+            names = client.get_online_players("1")
+            mock_cmd.assert_called_once_with("1", "list")
+            self.assertEqual(names, ["Gamer123"])
+
+    def test_crafty_client_get_server_logs(self) -> None:
+        """get_server_logs returns a list of log line strings."""
+        client = CraftyClient(self.config)
+        with patch.object(
+            client,
+            "_request_json",
+            return_value={
+                "status": "ok",
+                "data": ["[INFO] Line 1", "[INFO] Line 2"],
+            },
+        ):
+            logs = client.get_server_logs("1")
+            self.assertEqual(logs, ["[INFO] Line 1", "[INFO] Line 2"])
 
 
 if __name__ == "__main__":
