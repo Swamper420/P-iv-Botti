@@ -6,12 +6,16 @@ from urllib.error import HTTPError, URLError
 
 from bot.commands.mine_logic import (
     CraftyClient,
+    _format_death_causes,
+    _format_duration,
     _format_memory,
     _parse_players_field,
     add_mine_allowlist,
     fetch_mine_allowlist,
+    fetch_mine_stats,
     fetch_mine_status,
     handle_mine_command,
+    parse_bds_player_stats,
     parse_mine_command,
 )
 from bot.config import CraftyConfig
@@ -68,6 +72,22 @@ class MineLogicTests(unittest.TestCase):
         self.assertEqual(
             parse_mine_command("!mine allowlist add"),
             (True, "allowlist_add", "", ""),
+        )
+
+        # Stats subcommands
+        self.assertEqual(parse_mine_command("!mine stats"), (True, "stats", "", ""))
+        self.assertEqual(parse_mine_command("!mine tilastot"), (True, "stats", "", ""))
+        self.assertEqual(parse_mine_command("!mine statistiikka"), (True, "stats", "", ""))
+        self.assertEqual(parse_mine_command("!mine statit"), (True, "stats", "", ""))
+        self.assertEqual(parse_mine_command("!mine pelaajat"), (True, "stats", "", ""))
+        self.assertEqual(parse_mine_command("!mine stats bedrock"), (True, "stats", "bedrock", ""))
+        self.assertEqual(parse_mine_command("!mine stats Steve"), (True, "stats", "Steve", ""))
+        self.assertEqual(
+            parse_mine_command("!mine stats bedrock Steve"), (True, "stats", "bedrock", "Steve")
+        )
+        self.assertEqual(
+            parse_mine_command("!mine stats Bedrock Realm Steve Jobs"),
+            (True, "stats", "Bedrock", "Realm Steve Jobs"),
         )
 
         # Invalid matches
@@ -598,8 +618,218 @@ class MineLogicTests(unittest.TestCase):
             logs = client.get_server_logs("1")
             self.assertEqual(logs, ["[INFO] Line 1", "[INFO] Line 2"])
 
+    def test_format_duration(self) -> None:
+        self.assertEqual(_format_duration(0), "0 min")
+        self.assertEqual(_format_duration(-5), "0 min")
+        self.assertEqual(_format_duration(45), "45 s")
+        self.assertEqual(_format_duration(60), "1 min")
+        self.assertEqual(_format_duration(150), "2 min")
+        self.assertEqual(_format_duration(3600), "1 h")
+        self.assertEqual(_format_duration(3720), "1 h 2 min")
+        self.assertEqual(_format_duration(7200), "2 h")
+        self.assertEqual(_format_duration(90000), "1 pv 1 h")
+        self.assertEqual(_format_duration(86400 * 2), "2 pv")
+
+    def test_format_death_causes(self) -> None:
+        self.assertEqual(_format_death_causes([]), "")
+        self.assertEqual(
+            _format_death_causes(["was slain by Zombie", "fell from a high place", "was slain by Zombie"]),
+            "was slain by Zombie (2x), fell from a high place (1x)",
+        )
+
+    def test_crafty_client_get_server_allowlist_entries(self) -> None:
+        client = CraftyClient(self.config)
+        allowlist_json = json.dumps([
+            {"name": "PlayerOne", "xuid": "11111", "ignoresPlayerLimit": False},
+            {"name": "PlayerTwo", "xuid": "22222", "ignoresPlayerLimit": True},
+        ])
+        with patch.object(
+            client,
+            "get_server_file",
+            return_value={"status": "ok", "data": {"content": allowlist_json}},
+        ):
+            entries = client.get_server_allowlist_entries("1")
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0]["name"], "PlayerOne")
+            self.assertEqual(entries[0]["xuid"], "11111")
+            self.assertFalse(entries[0]["ignoresPlayerLimit"])
+
+    def test_crafty_client_get_server_permissions(self) -> None:
+        client = CraftyClient(self.config)
+        perms_json = json.dumps([
+            {"permission": "operator", "xuid": "11111"},
+            {"permission": "member", "xuid": "22222"},
+            {"permission": "visitor", "name": "VisitorBob"},
+        ])
+        with patch.object(
+            client,
+            "get_server_file",
+            return_value={"status": "ok", "data": {"content": perms_json}},
+        ):
+            perms = client.get_server_permissions("1")
+            self.assertEqual(perms["11111"], "operator")
+            self.assertEqual(perms["22222"], "member")
+            self.assertEqual(perms["visitorbob"], "visitor")
+
+    def test_parse_bds_player_stats(self) -> None:
+        logs = [
+            "[2026-08-27 10:00:00 INFO] Player connected: Steve, xuid: 1001",
+            "[2026-08-27 10:15:00 INFO] Steve fell from a high place",
+            "[2026-08-27 10:20:00 INFO] <Steve> Watch out for cliffs!",
+            "[2026-08-27 10:30:00 INFO] Player disconnected: Steve, xuid: 1001",
+            "[2026-08-27 11:00:00 INFO] Player connected: Alex, xuid: 1002",
+            "[2026-08-27 11:45:00 INFO] Alex was slain by Zombie",
+        ]
+        allowlist = [
+            {"name": "Steve", "xuid": "1001"},
+            {"name": "Alex", "xuid": "1002"},
+            {"name": "InactiveBob", "xuid": "1003"},
+        ]
+        permissions = {"1001": "operator", "1002": "member"}
+        online_players = ["Alex"]
+
+        stats = parse_bds_player_stats(
+            log_lines=logs,
+            allowlist_entries=allowlist,
+            permissions=permissions,
+            online_player_names=online_players,
+        )
+
+        self.assertEqual(len(stats), 3)
+
+        # Alex is online -> sorted first
+        alex = stats[0]
+        self.assertEqual(alex.name, "Alex")
+        self.assertTrue(alex.is_online)
+        self.assertEqual(alex.role, "Jäsen")
+        self.assertEqual(alex.deaths, 1)
+        self.assertEqual(alex.death_causes, ["was slain by Zombie"])
+
+        # Steve is offline, had 30m playtime
+        steve = stats[1]
+        self.assertEqual(steve.name, "Steve")
+        self.assertFalse(steve.is_online)
+        self.assertEqual(steve.role, "Ylläpitäjä (OP)")
+        self.assertEqual(steve.total_playtime_seconds, 1800.0)
+        self.assertEqual(steve.session_count, 1)
+        self.assertEqual(steve.deaths, 1)
+        self.assertEqual(steve.chat_count, 1)
+
+        # InactiveBob was only in allowlist
+        bob = stats[2]
+        self.assertEqual(bob.name, "InactiveBob")
+        self.assertFalse(bob.is_online)
+        self.assertEqual(bob.session_count, 0)
+        self.assertEqual(bob.total_playtime_seconds, 0.0)
+
+    def test_fetch_mine_stats_unconfigured(self) -> None:
+        unconfigured = CraftyConfig(api_token="")
+        reply = fetch_mine_stats(unconfigured)
+        self.assertIn("Crafty Controller -integraatiota ei ole määritetty", reply)
+
+    def test_fetch_mine_stats_server_overview(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = [
+            "[2026-08-27 10:00:00 INFO] Player connected: Steve, xuid: 1001",
+            "[2026-08-27 10:30:00 INFO] Steve fell from a high place",
+            "[2026-08-27 11:00:00 INFO] Player disconnected: Steve, xuid: 1001",
+        ]
+        client.get_server_allowlist_entries.return_value = [
+            {"name": "Steve", "xuid": "1001"}
+        ]
+        client.get_server_permissions.return_value = {"1001": "operator"}
+        client.get_online_players.return_value = []
+
+        reply = fetch_mine_stats(self.config, client=client)
+
+        self.assertIn("📊 <b>Bedrock SMP</b> — <i>Pelaajatilastot (1 pelaajaa):</i>", reply)
+        self.assertIn("⚪ <b>Steve</b> <i>(Ylläpitäjä (OP))</i>", reply)
+        self.assertIn("<code>» TILA:     </code> Poissa linjoilta", reply)
+        self.assertIn("<code>» PELIAIKA: </code> <b>1 h</b> (1 istuntoa)", reply)
+        self.assertIn("<code>» KUOLEMAT: </code> <b>1 kpl</b> (viimeisin: <i>fell from a high place</i>)", reply)
+
+    def test_fetch_mine_stats_single_player_found(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = [
+            "[2026-08-27 10:00:00 INFO] Player connected: Steve, xuid: 1001",
+            "[2026-08-27 10:15:00 INFO] Steve fell from a high place",
+            "[2026-08-27 10:20:00 INFO] <Steve> Hello world",
+            "[2026-08-27 10:30:00 INFO] Player disconnected: Steve, xuid: 1001",
+        ]
+        client.get_server_allowlist_entries.return_value = [{"name": "Steve", "xuid": "1001"}]
+        client.get_server_permissions.return_value = {"1001": "operator"}
+        client.get_online_players.return_value = []
+
+        reply = fetch_mine_stats(self.config, player_query="Steve", client=client)
+
+        self.assertIn("📊 <b>Steve</b> — <i>Pelaajatilastot (Bedrock SMP)</i>", reply)
+        self.assertIn("<code>» TILA:       </code> ⚪ <b>Poissa linjoilta</b>", reply)
+        self.assertIn("<code>» ROOLI:      </code> <b>Ylläpitäjä (OP)</b>", reply)
+        self.assertIn("<code>» PELIAIKA:   </code> <b>30 min</b>", reply)
+        self.assertIn("<code>» ISTUNNOT:   </code> <b>1 kpl</b>", reply)
+        self.assertIn("<code>» KUOLEMAT:   </code> <b>1 kpl</b>", reply)
+        self.assertIn("<code>» KUOLINSYYT: </code> <i>fell from a high place (1x)</i>", reply)
+        self.assertIn("<code>» CHAT:       </code> <b>1 viestiä</b>", reply)
+        self.assertIn("<code>» XUID:       </code> <code>1001</code>", reply)
+
+    def test_fetch_mine_stats_single_player_not_found(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = []
+        client.get_server_allowlist_entries.return_value = []
+        client.get_server_permissions.return_value = {}
+        client.get_online_players.return_value = []
+
+        reply = fetch_mine_stats(self.config, player_query="NonExistentPlayer", client=client)
+
+        self.assertIn("Pelaajaa '<b>NonExistentPlayer</b>' ei löytynyt palvelimen <b>Bedrock SMP</b>", reply)
+
+    def test_fetch_mine_stats_smart_server_resolution(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = [
+            "[2026-08-27 10:00:00 INFO] Player connected: Xbox Gamer 123, xuid: 5555",
+            "[2026-08-27 10:45:00 INFO] Player disconnected: Xbox Gamer 123, xuid: 5555",
+        ]
+        client.get_server_allowlist_entries.return_value = [{"name": "Xbox Gamer 123", "xuid": "5555"}]
+        client.get_server_permissions.return_value = {}
+        client.get_online_players.return_value = []
+
+        # User ran "!mine stats Xbox Gamer 123" where "Xbox" was put in server_query and "Gamer 123" in player_query
+        reply = fetch_mine_stats(
+            self.config, server_query="Xbox", player_query="Gamer 123", client=client
+        )
+
+        self.assertIn("📊 <b>Xbox Gamer 123</b> — <i>Pelaajatilastot (Bedrock SMP)</i>", reply)
+        self.assertIn("<code>» PELIAIKA:   </code> <b>45 min</b>", reply)
+
+    def test_handle_mine_command_stats_routing(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = []
+        client.get_server_allowlist_entries.return_value = [{"name": "Steve", "xuid": "1001"}]
+        client.get_server_permissions.return_value = {}
+        client.get_online_players.return_value = []
+
+        reply = handle_mine_command(self.config, "!mine stats", client=client)
+        self.assertIn("📊 <b>Bedrock SMP</b> — <i>Pelaajatilastot (1 pelaajaa):</i>", reply)
+        self.assertIn("Steve", reply)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

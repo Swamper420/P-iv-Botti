@@ -12,7 +12,7 @@ from bot.commands.message_utils import reply_in_chunks
 from bot.commands.mine_logic import handle_mine_command, parse_mine_command
 from bot.config import BotConfig
 
-COMMAND_USAGE = "!mine | !mine <palvelin> | !mine allowlist [palvelin] | !mine allowlist add [palvelin] <pelaaja>"
+COMMAND_USAGE = "!mine | !mine <palvelin> | !mine allowlist [palvelin] | !mine allowlist add [palvelin] <pelaaja> | !mine stats [palvelin] [pelaaja]"
 
 
 def _build_handler(

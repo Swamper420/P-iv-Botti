@@ -1,5 +1,5 @@
-from __future__ import annotations
-
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import html
 import json
 import logging
@@ -31,6 +31,71 @@ _BEDROCK_LIST_RE = re.compile(
 _LOG_PREFIX_RE = re.compile(
     r"^\[.*?\]\s*:?\s*",
 )
+
+_BDS_TIMESTAMP_RE = re.compile(
+    r"^(?:\[(?P<date>\d{4}-\d{2}-\d{2})?[ T]?(?P<time>\d{2}:\d{2}:\d{2})(?:\.\d+|\:\d+)?(?:Z)?\s*(?P<level>[A-Z]+)?\]\s*:?\s*|(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}))?"
+)
+_BDS_CONNECT_RE = re.compile(
+    r"Player\s+connected:\s*(?P<name>[^,]+)(?:,\s*xuid:\s*(?P<xuid>\w+))?",
+    re.IGNORECASE,
+)
+_BDS_DISCONNECT_RE = re.compile(
+    r"Player\s+disconnected:\s*(?P<name>[^,]+)(?:,\s*xuid:\s*(?P<xuid>\w+))?",
+    re.IGNORECASE,
+)
+_BDS_CHAT_RE = re.compile(
+    r"^<(?P<name>[^>]+)>\s+(?P<msg>.*)$"
+)
+
+_BDS_DEATH_PATTERNS = [
+    "was slain by",
+    "was blown up by",
+    "was shot by",
+    "was killed by",
+    "was squashed by",
+    "was pricked to death",
+    "was impaled by",
+    "was roasted in",
+    "was struck by",
+    "fell from a high place",
+    "fell from",
+    "fell off",
+    "fell out of",
+    "drowned",
+    "burned to death",
+    "tried to swim in lava",
+    "suffocated in a wall",
+    "suffocated",
+    "hit the ground too hard",
+    "withered away",
+    "starved to death",
+    "experienced kinetic energy",
+    "discovered the floor was lava",
+    "went up in flames",
+    "walked into danger zone",
+    "walked into a cactus",
+    "walked into fire",
+    "blew up",
+    "died",
+    "froze to death",
+]
+
+
+@dataclass
+class PlayerStatInfo:
+    name: str
+    xuid: str | None = None
+    role: str | None = None
+    is_online: bool = False
+    current_session_seconds: float = 0.0
+    total_playtime_seconds: float = 0.0
+    session_count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    deaths: int = 0
+    death_causes: list[str] = field(default_factory=list)
+    chat_count: int = 0
+    ignores_player_limit: bool = False
 
 
 def _parse_players_field(raw: Any) -> list[str]:
@@ -80,6 +145,7 @@ def parse_mine_command(
       - 'status' (default): target_server is the server query
       - 'allowlist_list': target_server is optional server query
       - 'allowlist_add': target_server is optional server query, target_player is the player gamertag/name
+      - 'stats': target_server is optional server query, target_player is optional player query
     """
     if not text:
         return False, "", "", ""
@@ -119,6 +185,14 @@ def parse_mine_command(
 
         # If !mine allowlist <palvelin>
         return True, "allowlist_list", " ".join(sub_args).strip(), ""
+
+    if first_token_lower in ("stats", "tilastot", "statistiikka", "statit", "pelaajat"):
+        sub_args = tokens[1:]
+        if not sub_args:
+            return True, "stats", "", ""
+        if len(sub_args) == 1:
+            return True, "stats", sub_args[0], ""
+        return True, "stats", sub_args[0], " ".join(sub_args[1:])
 
     return True, "status", rest, ""
 
@@ -274,38 +348,33 @@ class CraftyClient:
             LOGGER.debug("get_server_file failed for %s on server %s: %s", clean_path, server_id, exc)
             return None
 
-    def get_server_allowlist(self, server_id: str | int) -> list[str]:
-        """Retrieve allowlist player names for a server.
+    def _extract_file_content(self, file_data: Any) -> str | None:
+        """Extract raw string content from Crafty file API response."""
+        if not file_data:
+            return None
+        if isinstance(file_data, dict):
+            data_field = file_data.get("data")
+            if isinstance(data_field, dict):
+                content = data_field.get("content")
+                if content is not None:
+                    return str(content)
+            elif isinstance(data_field, str):
+                return data_field
+            if "content" in file_data:
+                return str(file_data["content"])
+        elif isinstance(file_data, str):
+            return file_data
+        return None
 
-        Crafty's files API response format:
-        {"status": "ok", "data": {"content": "<raw file text>", "attributes": {...}}}
-        The "content" field contains the raw JSON text of allowlist.json.
-        """
+    def get_server_allowlist_entries(self, server_id: str | int) -> list[dict[str, Any]]:
+        """Retrieve allowlist player entries (with name, xuid, etc.) for a server."""
         for filename in ("allowlist.json", "whitelist.json"):
             try:
                 file_data = self.get_server_file(server_id, filename)
-                if not file_data:
-                    continue
-
-                # Extract the raw file content string from the Crafty API response
-                raw_content: str | None = None
-                if isinstance(file_data, dict):
-                    # Expected: {"status": "ok", "data": {"content": "..."}}
-                    data_field = file_data.get("data")
-                    if isinstance(data_field, dict):
-                        raw_content = data_field.get("content")
-                    elif isinstance(data_field, str):
-                        raw_content = data_field
-                    # Fallback: content directly at top level
-                    if raw_content is None:
-                        raw_content = file_data.get("content")
-                elif isinstance(file_data, str):
-                    raw_content = file_data
-
+                raw_content = self._extract_file_content(file_data)
                 if not raw_content:
                     continue
 
-                # Parse the JSON content of the allowlist file
                 entries: list[Any] = []
                 try:
                     parsed = json.loads(raw_content)
@@ -314,20 +383,62 @@ class CraftyClient:
                 except Exception:
                     pass
 
-                names: list[str] = []
+                valid_entries: list[dict[str, Any]] = []
                 for item in entries:
                     if isinstance(item, dict):
-                        name = item.get("name") or item.get("username")
-                        if name:
-                            names.append(str(name))
+                        valid_entries.append(item)
                     elif isinstance(item, str) and item.strip():
-                        names.append(item.strip())
-                if names:
-                    return names
+                        valid_entries.append({"name": item.strip()})
+                if valid_entries:
+                    return valid_entries
             except Exception as exc:
                 LOGGER.debug("Could not read %s for server %s: %s", filename, server_id, exc)
 
         return []
+
+    def get_server_allowlist(self, server_id: str | int) -> list[str]:
+        """Retrieve allowlist player names for a server."""
+        entries = self.get_server_allowlist_entries(server_id)
+        names: list[str] = []
+        for item in entries:
+            name = item.get("name") or item.get("username")
+            if name and str(name).strip():
+                names.append(str(name).strip())
+        return names
+
+    def get_server_permissions(self, server_id: str | int) -> dict[str, str]:
+        """Retrieve permissions mapping {xuid_or_name: permission_level}."""
+        for filename in ("permissions.json", "ops.json"):
+            try:
+                file_data = self.get_server_file(server_id, filename)
+                raw_content = self._extract_file_content(file_data)
+                if not raw_content:
+                    continue
+
+                entries: list[Any] = []
+                try:
+                    parsed = json.loads(raw_content)
+                    if isinstance(parsed, list):
+                        entries = parsed
+                except Exception:
+                    pass
+
+                perms: dict[str, str] = {}
+                for item in entries:
+                    if isinstance(item, dict):
+                        perm = item.get("permission") or item.get("level") or "operator"
+                        xuid = item.get("xuid")
+                        name = item.get("name")
+                        if xuid:
+                            perms[str(xuid)] = str(perm)
+                        if name:
+                            perms[str(name).casefold()] = str(perm)
+                if perms:
+                    return perms
+            except Exception as exc:
+                LOGGER.debug("Could not read %s for server %s: %s", filename, server_id, exc)
+
+        return {}
 
 
 
@@ -856,6 +967,455 @@ def add_mine_allowlist(
     return "\n\n".join(results)
 
 
+def _format_duration(seconds: float | int) -> str:
+    """Format seconds into human-readable Finnish duration (e.g. 1 h 25 min)."""
+    if seconds <= 0:
+        return "0 min"
+    sec = int(seconds)
+    if sec < 60:
+        return f"{sec} s"
+    mins = (sec // 60) % 60
+    hours = sec // 3600
+    days = hours // 24
+    if days > 0:
+        rem_hours = hours % 24
+        if rem_hours > 0:
+            return f"{days} pv {rem_hours} h"
+        return f"{days} pv"
+    if hours > 0:
+        if mins > 0:
+            return f"{hours} h {mins} min"
+        return f"{hours} h"
+    return f"{mins} min"
+
+
+def _format_death_causes(causes: list[str]) -> str:
+    """Summarize list of death causes with counts, e.g. 'fell from a high place (2x), was slain by Zombie (1x)'."""
+    if not causes:
+        return ""
+    counts: dict[str, int] = {}
+    for c in causes:
+        cleaned = c.strip()
+        if cleaned:
+            counts[cleaned] = counts.get(cleaned, 0) + 1
+
+    parts = []
+    # Sort by frequency descending
+    for cause, count in sorted(counts.items(), key=lambda item: item[1], reverse=True):
+        if count > 1:
+            parts.append(f"{cause} ({count}x)")
+        else:
+            parts.append(f"{cause} (1x)")
+    return ", ".join(parts)
+
+
+def parse_bds_player_stats(
+    log_lines: list[str],
+    allowlist_entries: list[dict[str, Any]] | None = None,
+    permissions: dict[str, str] | None = None,
+    online_player_names: list[str] | None = None,
+) -> list[PlayerStatInfo]:
+    """Parse Bedrock Dedicated Server log lines, allowlist and permissions into player statistics."""
+    stats_by_name: dict[str, PlayerStatInfo] = {}
+    online_names_set = {n.casefold(): n for n in (online_player_names or [])}
+    perms_dict = permissions or {}
+
+    # Initialize players from allowlist
+    for entry in allowlist_entries or []:
+        raw_name = entry.get("name") or entry.get("username")
+        if not raw_name:
+            continue
+        p_name = str(raw_name).strip()
+        if not p_name:
+            continue
+        pxuid = entry.get("xuid")
+        stat = PlayerStatInfo(
+            name=p_name,
+            xuid=str(pxuid) if pxuid else None,
+            ignores_player_limit=bool(entry.get("ignoresPlayerLimit", False)),
+        )
+        stats_by_name[p_name.casefold()] = stat
+
+    # Track open sessions: player_key -> (start_epoch, start_ts_str)
+    open_sessions: dict[str, tuple[float, str]] = {}
+    last_known_epoch: float = 0.0
+    simulated_second_counter: float = 0.0
+
+    for line in log_lines:
+        line_str = line.strip()
+        if not line_str:
+            continue
+
+        ts_str: str | None = None
+        current_epoch: float = 0.0
+
+        ts_match = _BDS_TIMESTAMP_RE.match(line_str)
+        if ts_match:
+            date_val = ts_match.group("date")
+            time_val = ts_match.group("time")
+            iso_val = ts_match.group("iso")
+            if iso_val:
+                try:
+                    dt = datetime.fromisoformat(iso_val.replace("Z", "+00:00"))
+                    current_epoch = dt.timestamp()
+                    ts_str = dt.strftime("%d.%m. %H:%M")
+                except Exception:
+                    pass
+            elif date_val and time_val:
+                try:
+                    dt = datetime.strptime(f"{date_val} {time_val}", "%Y-%m-%d %H:%M:%S")
+                    current_epoch = dt.timestamp()
+                    ts_str = f"{date_val} {time_val}"
+                except Exception:
+                    pass
+            elif time_val:
+                try:
+                    parts = [int(p) for p in time_val.split(":")]
+                    current_epoch = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                    # Handle midnight rollover if necessary
+                    if current_epoch < last_known_epoch and (last_known_epoch - current_epoch) > 3600 * 12:
+                        current_epoch += 86400
+                    ts_str = time_val
+                except Exception:
+                    pass
+
+        if current_epoch > 0:
+            last_known_epoch = max(last_known_epoch, current_epoch)
+        else:
+            simulated_second_counter += 1.0
+            current_epoch = last_known_epoch + simulated_second_counter
+
+        # Clean line to extract message
+        cleaned_msg = _LOG_PREFIX_RE.sub("", line_str).strip()
+
+        # 1. Connect
+        conn_match = _BDS_CONNECT_RE.search(cleaned_msg)
+        if conn_match:
+            pname = conn_match.group("name").strip()
+            pxuid = conn_match.group("xuid")
+            p_fold = pname.casefold()
+
+            if p_fold not in stats_by_name:
+                stats_by_name[p_fold] = PlayerStatInfo(name=pname)
+            p_stat = stats_by_name[p_fold]
+            p_stat.name = pname
+            if pxuid and not p_stat.xuid:
+                p_stat.xuid = pxuid
+
+            # If previous session was not closed, close it now
+            if p_fold in open_sessions:
+                prev_epoch, _ = open_sessions.pop(p_fold)
+                duration = max(0.0, current_epoch - prev_epoch)
+                p_stat.total_playtime_seconds += duration
+
+            open_sessions[p_fold] = (current_epoch, ts_str or "")
+            p_stat.session_count += 1
+            if not p_stat.first_seen and ts_str:
+                p_stat.first_seen = ts_str
+            if ts_str:
+                p_stat.last_seen = ts_str
+            continue
+
+        # 2. Disconnect
+        disc_match = _BDS_DISCONNECT_RE.search(cleaned_msg)
+        if disc_match:
+            pname = disc_match.group("name").strip()
+            pxuid = disc_match.group("xuid")
+            p_fold = pname.casefold()
+
+            if p_fold not in stats_by_name:
+                stats_by_name[p_fold] = PlayerStatInfo(name=pname)
+            p_stat = stats_by_name[p_fold]
+            p_stat.name = pname
+            if pxuid and not p_stat.xuid:
+                p_stat.xuid = pxuid
+
+            if p_fold in open_sessions:
+                prev_epoch, _ = open_sessions.pop(p_fold)
+                duration = max(0.0, current_epoch - prev_epoch)
+                p_stat.total_playtime_seconds += duration
+
+            if ts_str:
+                p_stat.last_seen = ts_str
+            continue
+
+        # 3. Chat
+        chat_match = _BDS_CHAT_RE.match(cleaned_msg)
+        if chat_match:
+            pname = chat_match.group("name").strip()
+            p_fold = pname.casefold()
+            if p_fold in stats_by_name:
+                p_stat = stats_by_name[p_fold]
+                p_stat.chat_count += 1
+                if ts_str:
+                    p_stat.last_seen = ts_str
+            continue
+
+        # 4. Deaths
+        for pattern in _BDS_DEATH_PATTERNS:
+            pattern_with_space = f" {pattern}"
+            if pattern_with_space in cleaned_msg or cleaned_msg.startswith(pattern):
+                idx = cleaned_msg.find(pattern)
+                candidate_name = cleaned_msg[:idx].strip()
+                if candidate_name:
+                    p_fold = candidate_name.casefold()
+                    if p_fold not in stats_by_name:
+                        stats_by_name[p_fold] = PlayerStatInfo(name=candidate_name)
+                    p_stat = stats_by_name[p_fold]
+                    p_stat.deaths += 1
+                    cause = cleaned_msg[idx:].strip()
+                    p_stat.death_causes.append(cause)
+                    if not p_stat.first_seen and ts_str:
+                        p_stat.first_seen = ts_str
+                    if ts_str:
+                        p_stat.last_seen = ts_str
+                    break
+
+    # Reconcile currently online players
+    for p_fold, orig_name in online_names_set.items():
+        if p_fold not in stats_by_name:
+            stats_by_name[p_fold] = PlayerStatInfo(name=orig_name)
+        p_stat = stats_by_name[p_fold]
+        p_stat.is_online = True
+        p_stat.last_seen = "Paikalla nyt"
+        if p_fold in open_sessions:
+            start_epoch, _ = open_sessions.pop(p_fold)
+            curr_duration = max(0.0, last_known_epoch - start_epoch)
+            p_stat.current_session_seconds = curr_duration
+            p_stat.total_playtime_seconds += curr_duration
+        else:
+            p_stat.session_count = max(p_stat.session_count, 1)
+
+    # For offline players with an unclosed open session in logs:
+    for p_fold, (start_epoch, _) in open_sessions.items():
+        p_stat = stats_by_name.get(p_fold)
+        if p_stat and not p_stat.is_online:
+            duration = max(0.0, last_known_epoch - start_epoch)
+            p_stat.total_playtime_seconds += duration
+
+    # Assign roles & permissions
+    for p_stat in stats_by_name.values():
+        perm: str | None = None
+        if p_stat.xuid and str(p_stat.xuid) in perms_dict:
+            perm = perms_dict[str(p_stat.xuid)]
+        elif p_stat.name.casefold() in perms_dict:
+            perm = perms_dict[p_stat.name.casefold()]
+
+        if perm:
+            perm_lower = perm.lower()
+            if "op" in perm_lower or "admin" in perm_lower:
+                p_stat.role = "Ylläpitäjä (OP)"
+            elif "member" in perm_lower or "jäsen" in perm_lower:
+                p_stat.role = "Jäsen"
+            elif "visitor" in perm_lower:
+                p_stat.role = "Vierailija"
+            else:
+                p_stat.role = perm.title()
+        else:
+            p_stat.role = "Pelaaja"
+
+    # Sort players: online first, then by total playtime descending, then by session count, then by name
+    return sorted(
+        stats_by_name.values(),
+        key=lambda s: (not s.is_online, -s.total_playtime_seconds, -s.session_count, s.name.casefold()),
+    )
+
+
+def _format_single_player_stat(stat: PlayerStatInfo, server_name: str) -> str:
+    """Format detailed single player statistics profile."""
+    name_esc = html.escape(stat.name)
+    server_esc = html.escape(server_name)
+
+    if stat.is_online:
+        session_str = _format_duration(stat.current_session_seconds)
+        status_line = f"🟢 <b>Paikalla</b> (istunto {session_str})"
+    else:
+        status_line = "⚪ <b>Poissa linjoilta</b>"
+
+    playtime_str = _format_duration(stat.total_playtime_seconds)
+    lines = [
+        f"📊 <b>{name_esc}</b> — <i>Pelaajatilastot ({server_esc})</i>",
+        "",
+        f"<code>» TILA:       </code> {status_line}",
+        f"<code>» ROOLI:      </code> <b>{html.escape(stat.role or 'Pelaaja')}</b>",
+        f"<code>» PELIAIKA:   </code> <b>{playtime_str}</b>",
+        f"<code>» ISTUNNOT:   </code> <b>{stat.session_count} kpl</b>",
+        f"<code>» KUOLEMAT:   </code> <b>{stat.deaths} kpl</b>",
+    ]
+
+    if stat.death_causes:
+        causes_summary = _format_death_causes(stat.death_causes)
+        lines.append(f"<code>» KUOLINSYYT: </code> <i>{html.escape(causes_summary)}</i>")
+
+    if stat.chat_count > 0:
+        lines.append(f"<code>» CHAT:       </code> <b>{stat.chat_count} viestiä</b>")
+
+    if stat.first_seen:
+        lines.append(f"<code>» ENSIKÄYNTI: </code> <b>{html.escape(stat.first_seen)}</b>")
+
+    if stat.last_seen:
+        lines.append(f"<code>» VIIMEKSI:   </code> <b>{html.escape(stat.last_seen)}</b>")
+
+    if stat.xuid:
+        lines.append(f"<code>» XUID:       </code> <code>{html.escape(str(stat.xuid))}</code>")
+
+    return "\n".join(lines)
+
+
+def _format_server_player_stats(server_name: str, stats: list[PlayerStatInfo]) -> str:
+    """Format overview of all players for a server."""
+    server_esc = html.escape(server_name)
+    if not stats:
+        return (
+            f"📊 <b>{server_esc}</b> — <i>Pelaajatilastot</i>\n\n"
+            "<i>Ei vielä tallennettuja pelaajatilastoja tai lokitapahtumia.</i>"
+        )
+
+    sections = [f"📊 <b>{server_esc}</b> — <i>Pelaajatilastot ({len(stats)} pelaajaa):</i>"]
+
+    for stat in stats:
+        name_esc = html.escape(stat.name)
+        role_tag = f" <i>({html.escape(stat.role)})</i>" if stat.role and stat.role != "Pelaaja" else ""
+        icon = "🟢" if stat.is_online else "⚪"
+
+        if stat.is_online:
+            session_str = _format_duration(stat.current_session_seconds)
+            state_text = f"Paikalla (istunto {session_str})"
+        else:
+            state_text = "Poissa linjoilta"
+
+        playtime_str = _format_duration(stat.total_playtime_seconds)
+        last_seen_str = stat.last_seen or "Tuntematon"
+
+        player_lines = [
+            f"{icon} <b>{name_esc}</b>{role_tag}",
+            f"<code>» TILA:     </code> {state_text}",
+            f"<code>» PELIAIKA: </code> <b>{playtime_str}</b> ({stat.session_count} istuntoa)",
+        ]
+
+        if stat.deaths > 0:
+            latest_death = stat.death_causes[-1] if stat.death_causes else ""
+            death_tail = f" (viimeisin: <i>{html.escape(latest_death)}</i>)" if latest_death else ""
+            player_lines.append(f"<code>» KUOLEMAT: </code> <b>{stat.deaths} kpl</b>{death_tail}")
+
+        player_lines.append(f"<code>» VIIMEKSI: </code> {html.escape(last_seen_str)}")
+        sections.append("\n".join(player_lines))
+
+    return "\n\n".join(sections)
+
+
+def fetch_mine_stats(
+    config: CraftyConfig,
+    server_query: str = "",
+    player_query: str = "",
+    client: CraftyClient | None = None,
+) -> str:
+    """Fetch player statistics for Minecraft Bedrock server(s)."""
+    if not config.is_configured:
+        return (
+            "Crafty Controller -integraatiota ei ole määritetty "
+            "(.env puuttuu CRAFTY_API_TOKEN)."
+        )
+
+    client = client or CraftyClient(config)
+
+    try:
+        servers = client.get_servers()
+    except HTTPError as exc:
+        LOGGER.warning("Crafty API HTTP error: %s", exc)
+        if exc.code in (401, 403):
+            return (
+                f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
+                "Tarkista CRAFTY_API_TOKEN."
+            )
+        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+    except URLError as exc:
+        LOGGER.warning("Crafty API connection error: %s", exc)
+        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+    except Exception as exc:
+        LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
+        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+
+    if not servers:
+        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
+
+    # Smart server & player resolution
+    target_player = player_query.strip()
+    selected_servers, err_msg = _resolve_servers(
+        servers, server_query, config.default_server_id
+    )
+
+    # If server_query did not match a server, check if server_query was actually the player name (or part of it)
+    if err_msg:
+        if len(servers) == 1 or config.default_server_id:
+            # Fallback to default server or single server and treat whole query as player name
+            fallback_servers, _ = _resolve_servers(servers, "", config.default_server_id)
+            if fallback_servers:
+                selected_servers = fallback_servers
+                if target_player:
+                    target_player = f"{server_query} {target_player}".strip()
+                else:
+                    target_player = server_query.strip()
+                err_msg = None
+
+    if err_msg:
+        return err_msg
+
+    results: list[str] = []
+    for server in selected_servers:
+        s_id = (
+            server.get("server_id")
+            or server.get("server_uuid")
+            or server.get("id")
+        )
+        raw_name = (
+            server.get("server_name")
+            or server.get("name")
+            or f"Palvelin {s_id}"
+        )
+        server_name = str(raw_name)
+
+        if s_id is None:
+            continue
+
+        try:
+            logs = client.get_server_logs(s_id)
+            allowlist_entries = client.get_server_allowlist_entries(s_id)
+            permissions = client.get_server_permissions(s_id)
+            online_players = client.get_online_players(s_id)
+
+            player_stats = parse_bds_player_stats(
+                log_lines=logs,
+                allowlist_entries=allowlist_entries,
+                permissions=permissions,
+                online_player_names=online_players,
+            )
+
+            if target_player:
+                target_norm = target_player.casefold()
+                matched_stat = next(
+                    (s for s in player_stats if s.name.casefold() == target_norm or target_norm in s.name.casefold()),
+                    None,
+                )
+                if matched_stat:
+                    results.append(_format_single_player_stat(matched_stat, server_name))
+                else:
+                    results.append(
+                        f"Pelaajaa '<b>{html.escape(target_player)}</b>' ei löytynyt "
+                        f"palvelimen <b>{html.escape(server_name)}</b> tilastoista tai sallittujen listalta."
+                    )
+            else:
+                results.append(_format_server_player_stats(server_name, player_stats))
+
+        except Exception as exc:
+            LOGGER.exception("Failed to fetch player stats for server %s: %s", s_id, exc)
+            results.append(
+                f"❌ Virhe haettaessa pelaajatilastoja palvelimelta <b>{html.escape(server_name)}</b>: {exc}"
+            )
+
+    return "\n\n".join(results)
+
+
 def handle_mine_command(
     config: CraftyConfig,
     text: str | None,
@@ -871,6 +1431,10 @@ def handle_mine_command(
     if subcommand == "allowlist_add":
         return add_mine_allowlist(
             config, player_name=player_name, server_query=server_query, client=client
+        )
+    if subcommand == "stats":
+        return fetch_mine_stats(
+            config, server_query=server_query, player_query=player_name, client=client
         )
     return fetch_mine_status(config, server_query=server_query, client=client)
 
