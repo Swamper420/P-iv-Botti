@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import ssl
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -15,6 +16,59 @@ LOGGER = logging.getLogger(__name__)
 
 _MINE_CMD_RE = re.compile(r"^\s*!mine(?:\s+|$)", re.IGNORECASE)
 _PLAYER_NAME_RE = re.compile(r"^[a-zA-Z0-9_ ]{1,32}$")
+
+# Bedrock ``list`` command output:
+#   "There are 2/10 players online:"
+#   "Steve, Alex"
+# (names may appear on the same line or the next line)
+_BEDROCK_LIST_RE = re.compile(
+    r"There are \d+/\d+ players online:\s*(.*)",
+    re.IGNORECASE,
+)
+
+# Common log-line prefix patterns to strip, e.g.:
+#   "[18:27:57 INFO]: ", "[INFO] ", "[2024-01-01 12:00:00 INFO]: "
+_LOG_PREFIX_RE = re.compile(
+    r"^\[.*?\]\s*:?\s*",
+)
+
+
+def _parse_players_field(raw: Any) -> list[str]:
+    """Extract player names from a Crafty stats ``players`` field.
+
+    The field may be a Python list, a JSON-encoded string (``"[]"``), or
+    ``None``.  Returns a flat list of player name strings.
+    """
+    if raw is None:
+        return []
+
+    # If it's already a Python list, use it directly
+    entries: list[Any] | None = None
+    if isinstance(raw, list):
+        entries = raw
+    elif isinstance(raw, str):
+        cleaned = raw.strip()
+        if not cleaned:
+            return []
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list):
+                entries = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if entries is None:
+        return []
+
+    names: list[str] = []
+    for item in entries:
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("username")
+            if name:
+                names.append(str(name))
+        elif isinstance(item, str) and item.strip():
+            names.append(item.strip())
+    return names
 
 
 def parse_mine_command(
@@ -277,30 +331,83 @@ class CraftyClient:
 
 
 
-    def get_online_players(self, server_id: str | int) -> list[str]:
-        """Fetch online player names for a running server.
+    def get_server_logs(self, server_id: str | int) -> list[str]:
+        """Fetch recent server log lines via the Crafty logs API.
 
-        Tries the Crafty /api/v2/servers/{id}/stats endpoint first (the
-        ``players`` field) and falls back to reading the ``log.log`` or
-        sending the ``list`` console command if the field is missing.
+        Returns a list of log-line strings (most recent lines last).
         """
-        # Primary: stats may already contain a player list
+        try:
+            response = self._request_json(
+                f"/api/v2/servers/{server_id}/logs?colors=false&raw=false&html=false"
+            )
+        except Exception as exc:
+            LOGGER.debug("get_server_logs failed for server %s: %s", server_id, exc)
+            return []
+
+        if isinstance(response, dict):
+            data = response.get("data")
+            if isinstance(data, list):
+                return [str(line) for line in data]
+        if isinstance(response, list):
+            return [str(line) for line in response]
+        return []
+
+    def get_online_players(self, server_id: str | int) -> list[str]:
+        """Fetch online player names for a running Bedrock server.
+
+        Strategy:
+        1. Check stats ``players`` field (may be a JSON string like ``"[]"``).
+        2. If empty, send the Bedrock ``list`` console command, wait briefly,
+           then parse the server logs for the response.
+        """
+        # 1. Try stats players field
         try:
             stats = self.get_server_stats(server_id)
-            player_list = stats.get("players") or stats.get("player_list") or []
-            names: list[str] = []
-            if isinstance(player_list, list):
-                for p in player_list:
-                    if isinstance(p, dict):
-                        name = p.get("name") or p.get("username")
-                        if name:
-                            names.append(str(name))
-                    elif isinstance(p, str) and p.strip():
-                        names.append(p.strip())
+            raw_players = stats.get("players") or stats.get("player_list")
+            names = _parse_players_field(raw_players)
             if names:
                 return names
         except Exception as exc:
             LOGGER.debug("get_online_players stats lookup failed for server %s: %s", server_id, exc)
+
+        # 2. Send Bedrock ``list`` command and read the response from logs
+        #    Bedrock output format:
+        #      line 1: "There are 1/10 players online:"
+        #      line 2: "Gamer123, Gamer456"
+        try:
+            self.send_server_command(server_id, "list")
+            time.sleep(1)  # give the server a moment to produce the response
+            log_lines = self.get_server_logs(server_id)
+            # Scan from newest to oldest for the Bedrock ``list`` response
+            for i, line in enumerate(reversed(log_lines)):
+                m = _BEDROCK_LIST_RE.search(line)
+                if m:
+                    tail = m.group(1).strip()
+                    if tail:
+                        return [
+                            n.strip()
+                            for n in tail.split(",")
+                            if n.strip()
+                        ]
+                    # Names are on the *next* log line (chronologically
+                    # after this one).
+                    real_idx = len(log_lines) - 1 - i
+                    if real_idx + 1 < len(log_lines):
+                        next_line = log_lines[real_idx + 1].strip()
+                        # Strip common log prefixes like "[INFO] " or
+                        # "[18:27:57 INFO]: "
+                        next_line = _LOG_PREFIX_RE.sub("", next_line).strip()
+                        if next_line:
+                            return [
+                                n.strip()
+                                for n in next_line.split(",")
+                                if n.strip()
+                            ]
+                    return []
+        except Exception as exc:
+            LOGGER.debug("get_online_players list-command failed for server %s: %s", server_id, exc)
+
+        return []
 
         return []
 
@@ -374,16 +481,8 @@ def _format_server_block(
         else stats.get("maxplayers", stats.get("players_max"))
     )
 
-    player_list = stats.get("players") or stats.get("player_list") or []
-    player_names: list[str] = []
-    if isinstance(player_list, list):
-        for p in player_list:
-            if isinstance(p, dict):
-                p_name = p.get("name") or p.get("username")
-                if p_name:
-                    player_names.append(str(p_name))
-            elif isinstance(p, str) and p.strip():
-                player_names.append(p.strip())
+    player_list = stats.get("players") or stats.get("player_list")
+    player_names: list[str] = _parse_players_field(player_list)
 
     # Use explicitly fetched online player names when stats didn't include them
     if not player_names and online_player_names:
@@ -572,7 +671,9 @@ def fetch_mine_status(
 
             # Fetch online player names when the stats don't include them
             has_players_in_stats = bool(
-                stats.get("players") or stats.get("player_list")
+                _parse_players_field(
+                    stats.get("players") or stats.get("player_list")
+                )
             )
             if not has_players_in_stats:
                 try:
