@@ -135,6 +135,47 @@ class MineLogicTests(unittest.TestCase):
         self.assertIn("» KUVAUS:", reply)
         self.assertIn("<i>Tervetuloa!</i>", reply)
 
+    def test_fetch_mine_status_online_players_from_separate_fetch(self) -> None:
+        """When stats lack a players list, get_online_players is called as fallback."""
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {
+                "server_id": "uuid-1",
+                "server_name": "Survival SMP",
+                "server_port": 25565,
+            }
+        ]
+        # Stats have an online count but no players list
+        client.get_server_stats.return_value = {
+            "running": True,
+            "online": 2,
+            "max_players": 20,
+        }
+        client.get_online_players.return_value = ["Steve", "Alex"]
+
+        reply = fetch_mine_status(self.config, client=client)
+
+        client.get_online_players.assert_called_once_with("uuid-1")
+        self.assertIn("(Steve, Alex)", reply)
+
+    def test_fetch_mine_status_skips_online_players_when_stats_have_them(self) -> None:
+        """When stats already include players, get_online_players is not called."""
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "uuid-1", "server_name": "Survival SMP"}
+        ]
+        client.get_server_stats.return_value = {
+            "running": True,
+            "online": 1,
+            "max_players": 20,
+            "players": ["Notch"],
+        }
+
+        reply = fetch_mine_status(self.config, client=client)
+
+        client.get_online_players.assert_not_called()
+        self.assertIn("(Notch)", reply)
+
     def test_fetch_mine_status_offline_server(self) -> None:
         client = MagicMock(spec=CraftyClient)
         client.get_servers.return_value = [
