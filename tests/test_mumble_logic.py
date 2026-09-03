@@ -4,12 +4,16 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.commands.mumble_logic import (
+    build_mumble_summary_card,
+    build_mumble_user_card,
     format_duration,
     format_mumble_summary,
     format_user_details,
+    handle_mumble_card_command,
     handle_mumble_command,
     parse_mumble_command,
 )
+from bot.rendering import render_card
 from bot.config import MumbleConfig
 from bot.tasks.mumble_logic import (
     MumbleChannelInfo,
@@ -222,6 +226,63 @@ class TestMumbleLogic(unittest.IsolatedAsyncioTestCase):
         # Not found
         res = await handle_mumble_command(manager, cfg, "!mumble Tuntematon")
         self.assertIn("ei löytynyt Mumble-palvelimelta", res)
+
+    async def test_handle_mumble_card_command_summary_and_stats(self) -> None:
+        cfg = MumbleConfig(host="localhost", port=64738)
+        u = MumbleUserInfo(
+            session=10,
+            name="Kalle",
+            channel_id=1,
+            channel_name="Huone",
+            online_seconds=3660,
+            ping_ms=15.0,
+            idle_seconds=120,
+        )
+        snap = MumbleServerSnapshot(
+            is_connected=True,
+            host="localhost",
+            port=64738,
+            server_name="Localhost",
+            bot_user="Botti",
+            channels={1: MumbleChannelInfo(channel_id=1, name="Huone")},
+            users={10: u},
+        )
+        manager = MagicMock()
+        manager.refresh_stats = AsyncMock()
+        manager.get_snapshot.return_value = snap
+
+        # Summary card
+        text, card = await handle_mumble_card_command(manager, cfg, "!mumble")
+        self.assertIn("Mumble: Localhost", text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.title, "Mumble: Localhost")
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        # User detail card
+        text, card = await handle_mumble_card_command(manager, cfg, "!mumble Kalle")
+        self.assertIn("Mumble: Kalle", text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.title, "Mumble: Kalle")
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+        # Empty users summary card
+        empty_snap = MumbleServerSnapshot(
+            is_connected=True,
+            host="localhost",
+            port=64738,
+            server_name="Localhost",
+            bot_user="Botti",
+            channels={},
+            users={},
+        )
+        manager.get_snapshot.return_value = empty_snap
+        text, card = await handle_mumble_card_command(manager, cfg, "!mumble")
+        self.assertIn("Käyttäjiä paikalla: <b>0</b>", text)
+        self.assertIsNotNone(card)
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 
 
 if __name__ == "__main__":

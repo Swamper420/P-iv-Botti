@@ -7,8 +7,12 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.commands.common import command_handler
-from bot.commands.message_utils import reply_in_chunks
-from bot.commands.mumble_logic import handle_mumble_command, parse_mumble_command
+from bot.commands.common import command_handler
+from bot.commands.message_utils import reply_in_chunks, reply_with_card
+from bot.commands.mumble_logic import (
+    handle_mumble_card_command,
+    parse_mumble_command,
+)
 from bot.config import BotConfig
 from bot.tasks.mumble import get_mumble_manager
 
@@ -32,13 +36,24 @@ def _build_handler(
 
         if update.effective_chat is not None:
             await context.bot.send_chat_action(
-                chat_id=update.effective_chat.id, action=ChatAction.TYPING
+                chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO
             )
 
         manager = get_mumble_manager(context.application)
-        reply_text = await handle_mumble_command(manager, config.mumble, message.text)
+        reply_text, card = await handle_mumble_card_command(
+            manager, config.mumble, message.text
+        )
 
-        if reply_text:
+        if card is not None:
+            await reply_with_card(
+                update,
+                card=card,
+                fallback_text=reply_text,
+                filename="mumble.png",
+                max_reply_length=config.max_reply_length,
+                parse_mode="HTML",
+            )
+        elif reply_text:
             await reply_in_chunks(
                 update, reply_text, config.max_reply_length, parse_mode="HTML"
             )
