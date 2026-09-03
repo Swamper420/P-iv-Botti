@@ -214,6 +214,42 @@ class ConfigTests(unittest.TestCase):
                 BotConfig.from_environment()
 
 
+    def test_rendering_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertEqual(config.rendering.theme, "dark")
+        self.assertEqual(config.rendering.card_width, 800)
+        self.assertEqual(config.rendering.font_family, "auto")
+
+    def test_rendering_custom_config(self) -> None:
+        env = {
+            "TELEGRAM_BOT_TOKEN": "token",
+            "RENDER_THEME": "light",
+            "RENDER_CARD_WIDTH": "1024",
+            "RENDER_FONT_FAMILY": "hack",
+        }
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertEqual(config.rendering.theme, "light")
+        self.assertEqual(config.rendering.card_width, 1024)
+        self.assertEqual(config.rendering.font_family, "hack")
+
+    def test_invalid_rendering_width_raises_error(self) -> None:
+        for invalid_val in ["100", "5000", "not_an_int"]:
+            with patch.dict(
+                os.environ,
+                {"TELEGRAM_BOT_TOKEN": "token", "RENDER_CARD_WIDTH": invalid_val},
+                clear=False,
+            ):
+                with self.assertRaises(ValueError):
+                    BotConfig.from_environment()
+
+
 if __name__ == "__main__":
     unittest.main()
 

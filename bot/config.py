@@ -189,6 +189,13 @@ class MumbleConfig:
 
 
 @dataclass(frozen=True)
+class RenderingConfig:
+    theme: str = "dark"
+    card_width: int = 800
+    font_family: str = "auto"
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -206,6 +213,7 @@ class BotConfig:
     tiivista: TiivistaConfig = TiivistaConfig()
     crafty: CraftyConfig = CraftyConfig()
     mumble: MumbleConfig = MumbleConfig()
+    rendering: RenderingConfig = RenderingConfig()
 
 
 
@@ -742,6 +750,21 @@ class BotConfig:
             stats_timeout_seconds=mumble_stats_timeout,
         )
 
+        render_width_raw = os.getenv("RENDER_CARD_WIDTH", "800").strip()
+        try:
+            render_card_width = int(render_width_raw)
+        except ValueError as exc:
+            raise ValueError("RENDER_CARD_WIDTH must be an integer") from exc
+
+        if render_card_width < 300 or render_card_width > 4000:
+            raise ValueError("RENDER_CARD_WIDTH must be between 300 and 4000")
+
+        rendering_config = RenderingConfig(
+            theme=os.getenv("RENDER_THEME", "dark").strip() or "dark",
+            card_width=render_card_width,
+            font_family=os.getenv("RENDER_FONT_FAMILY", "auto").strip() or "auto",
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -759,6 +782,7 @@ class BotConfig:
             tiivista=tiivista_config,
             crafty=crafty_config,
             mumble=mumble_config,
+            rendering=rendering_config,
         )
 
 
