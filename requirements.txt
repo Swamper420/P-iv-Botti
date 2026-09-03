@@ -4,5 +4,7 @@ Pillow
 ultralytics
 websockets
 rapidfuzz
+pymumble
+
 
 

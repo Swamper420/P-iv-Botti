@@ -28,6 +28,7 @@ When extending this project:
   - `naama.py` + `naama_logic.py`
   - `paranna.py` + `paranna_logic.py`
   - `mine.py` + `mine_logic.py`
+  - `mumble.py` + `mumble_logic.py`
   - `stt.py` + `stt_logic.py`
   - `telkkari.py` + `telkkari_logic.py`
   - `tiivista.py` + `tiivista_logic.py`
@@ -40,13 +41,14 @@ When extending this project:
 - Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
 - Background tasks are modularized in `bot/tasks/`:
   - `cs2_rss.py`: `Cs2RssNotifier` for background RSS polling
+  - `mumble.py`: `MumbleTask` for Mumble server presence and stats tracking
   - `reminders.py`: `ReminderNotifier` for scheduled reminder delivery
   - `twitch.py`: `TwitchEventSubNotifier` for Twitch EventSub WebSockets live notifications
   - Auto-discovered and registered via `bot/tasks/__init__.py` (`register_tasks`)
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig`, `CraftyConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig`, `CraftyConfig`, `MumbleConfig`).
 
 
 

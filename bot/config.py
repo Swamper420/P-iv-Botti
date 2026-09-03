@@ -170,6 +170,25 @@ class CraftyConfig:
 
 
 @dataclass(frozen=True)
+class MumbleConfig:
+    host: str = ""
+    port: int = 64738
+    user: str = "P-iv-Botti"
+    password: str = ""
+    channel: str = ""
+    auto_deafen: bool = True
+    auto_mute: bool = True
+    reconnect_delay_seconds: int = 10
+    certfile: str = ""
+    keyfile: str = ""
+    stats_timeout_seconds: float = 2.0
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.host)
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -186,6 +205,8 @@ class BotConfig:
     reminder: ReminderConfig = ReminderConfig()
     tiivista: TiivistaConfig = TiivistaConfig()
     crafty: CraftyConfig = CraftyConfig()
+    mumble: MumbleConfig = MumbleConfig()
+
 
 
 
@@ -687,6 +708,40 @@ class BotConfig:
             default_server_id=os.getenv("CRAFTY_DEFAULT_SERVER_ID", "").strip(),
         )
 
+        mumble_port = int(os.getenv("MUMBLE_PORT", "64738"))
+        if not (1 <= mumble_port <= 65535):
+            raise ValueError("MUMBLE_PORT must be between 1 and 65535")
+
+        mumble_reconnect_delay = int(
+            os.getenv("MUMBLE_RECONNECT_DELAY_SECONDS", "10")
+        )
+        if mumble_reconnect_delay < 1:
+            raise ValueError("MUMBLE_RECONNECT_DELAY_SECONDS must be >= 1")
+
+        mumble_stats_timeout = float(
+            os.getenv("MUMBLE_STATS_TIMEOUT_SECONDS", "2.0")
+        )
+        if mumble_stats_timeout <= 0:
+            raise ValueError("MUMBLE_STATS_TIMEOUT_SECONDS must be > 0")
+
+        mumble_config = MumbleConfig(
+            host=os.getenv("MUMBLE_HOST", "").strip(),
+            port=mumble_port,
+            user=os.getenv("MUMBLE_USER", "P-iv-Botti").strip() or "P-iv-Botti",
+            password=os.getenv("MUMBLE_PASSWORD", "").strip(),
+            channel=os.getenv("MUMBLE_CHANNEL", "").strip(),
+            auto_deafen=(
+                os.getenv("MUMBLE_AUTO_DEAFEN", "true").strip().lower() == "true"
+            ),
+            auto_mute=(
+                os.getenv("MUMBLE_AUTO_MUTE", "true").strip().lower() == "true"
+            ),
+            reconnect_delay_seconds=mumble_reconnect_delay,
+            certfile=os.getenv("MUMBLE_CERTFILE", "").strip(),
+            keyfile=os.getenv("MUMBLE_KEYFILE", "").strip(),
+            stats_timeout_seconds=mumble_stats_timeout,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -703,7 +758,9 @@ class BotConfig:
             reminder=reminder_config,
             tiivista=tiivista_config,
             crafty=crafty_config,
+            mumble=mumble_config,
         )
+
 
 
 
