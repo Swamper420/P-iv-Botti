@@ -23,7 +23,7 @@ def _build_handler(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         message = update.effective_message
-        if message is None or not message.text:
+        if message is None or not message.text:¨
             return
 
         is_match, _, _, _ = parse_mine_command(message.text)
