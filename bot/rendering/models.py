@@ -62,8 +62,8 @@ class Theme:
     code_bg: str = "#151518"
     font_family: str = "auto"
     card_width: int = 800
-    padding: int = 24
-    element_spacing: int = 16
+    padding: int = 18
+    element_spacing: int = 12
 
 
 DARK_THEME = Theme()
@@ -100,13 +100,15 @@ class TableElement(CardElement):
     col_widths: list[int | float] | None = None  # explicit pixels or proportional weights
     max_rows: int | None = None
     overflow: str = "ellipsis"  # "ellipsis", "clip", "none"
+    primary_col: int | None = 0  # Column to highlight/make bigger and bold (default 0)
+    bold_cols: list[int] | None = None  # Specific columns to render in bold
 
 
 @dataclass
 class DividerElement(CardElement):
     line: bool = True
-    margin_top: int = 6
-    margin_bottom: int = 6
+    margin_top: int = 4
+    margin_bottom: int = 4
 
 
 @dataclass
@@ -206,6 +208,8 @@ class Card:
         col_widths: list[int | float] | None = None,
         max_rows: int | None = None,
         overflow: str = "ellipsis",
+        primary_col: int | None = 0,
+        bold_cols: list[int] | None = None,
     ) -> Card:
         self.elements.append(
             TableElement(
@@ -215,12 +219,14 @@ class Card:
                 col_widths=col_widths,
                 max_rows=max_rows,
                 overflow=overflow,
+                primary_col=primary_col,
+                bold_cols=bold_cols,
             )
         )
         return self
 
     def add_divider(
-        self, line: bool = True, margin_top: int = 6, margin_bottom: int = 6
+        self, line: bool = True, margin_top: int = 4, margin_bottom: int = 4
     ) -> Card:
         self.elements.append(
             DividerElement(line=line, margin_top=margin_top, margin_bottom=margin_bottom)

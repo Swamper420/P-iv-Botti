@@ -905,7 +905,7 @@ class MineLogicTests(unittest.TestCase):
         reply_text, card = handle_mine_card_command(self.config, "!mine stats Steve", client=client)
         self.assertIn("Pelaajatilastot", reply_text)
         self.assertIsNotNone(card)
-        self.assertEqual(card.title, "Minecraft: Steve")
+        self.assertEqual(card.title, "Steve")
         png_bytes = render_card(card)
         self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
 

@@ -889,9 +889,16 @@ def build_mine_status_card(
 
         if player_names:
             card.add_divider()
-            card.add_text("Pelaajat paikalla:", bold=True)
             rows = [[str(i + 1), name] for i, name in enumerate(player_names)]
-            card.add_table(headers=["#", "Pelaaja"], rows=rows, col_widths=[1, 6], max_rows=10, overflow="ellipsis")
+            card.add_table(
+                headers=["#", "Pelaaja"],
+                rows=rows,
+                col_widths=[1, 6],
+                primary_col=1,
+                bold_cols=[1],
+                max_rows=10,
+                overflow="ellipsis",
+            )
         elif count_val == 0 and is_running:
             card.add_text("Ei pelaajia paikalla (aavemaisen hiljaista).", muted=True)
 
@@ -1003,6 +1010,8 @@ def build_mine_allowlist_card(servers_allowlist: list[tuple[str, list[str]]]) ->
                 headers=["#", "Pelaaja"],
                 rows=rows,
                 col_widths=[1, 5],
+                primary_col=1,
+                bold_cols=[1],
                 max_rows=25,
                 overflow="ellipsis",
             )
@@ -1029,6 +1038,8 @@ def build_mine_allowlist_card(servers_allowlist: list[tuple[str, list[str]]]) ->
                 headers=["#", "Pelaaja"],
                 rows=rows,
                 col_widths=[1, 5],
+                primary_col=1,
+                bold_cols=[1],
                 max_rows=10,
                 overflow="ellipsis",
             )
@@ -1056,12 +1067,11 @@ def build_mine_allowlist_add_card(results: list[tuple[str, str, bool, str]]) -> 
         if all_ok:
             return (
                 Card(
-                    title="Minecraft Allowlist",
-                    subtitle=f"Palvelin: {server_name}",
+                    title=player_name,
+                    subtitle=f"Minecraft Allowlist • {server_name}",
                     footer="Crafty Controller • P-iv-Botti",
                 )
                 .set_badge("LISÄTTY", BadgeColor.GREEN)
-                .add_key_value("Pelaaja", player_name)
                 .add_key_value("Palvelin", server_name)
                 .add_key_value("Toiminto", "allowlist add")
                 .add_text(f"Pelaaja {player_name} lisätty sallittujen listalle!")
@@ -1069,8 +1079,8 @@ def build_mine_allowlist_add_card(results: list[tuple[str, str, bool, str]]) -> 
         else:
             return (
                 Card(
-                    title="Minecraft Allowlist Virhe",
-                    subtitle=f"Palvelin: {server_name}",
+                    title=player_name,
+                    subtitle=f"Minecraft Allowlist Virhe • {server_name}",
                     footer="Crafty Controller • P-iv-Botti",
                 )
                 .set_badge("VIRHE", BadgeColor.RED)
@@ -1082,8 +1092,8 @@ def build_mine_allowlist_add_card(results: list[tuple[str, str, bool, str]]) -> 
         BadgeColor.YELLOW if any(r[2] for r in results) else BadgeColor.RED,
     )
     card = Card(
-        title="Minecraft Allowlist",
-        subtitle=f"Pelaaja: {player_name}",
+        title=player_name,
+        subtitle=f"Minecraft Allowlist ({len(results)} palvelinta)",
         footer="Crafty Controller • P-iv-Botti",
     ).set_badge(badge.text, badge.color)
     for s_name, _, ok, msg in results:
@@ -1738,8 +1748,8 @@ def _format_server_player_stats(server_name: str, stats: list[PlayerStatInfo]) -
 def build_mine_single_player_stat_card(stat: PlayerStatInfo, server_name: str) -> Card:
     """Build a rich Card for a single player profile."""
     card = Card(
-        title=f"Minecraft: {stat.name}",
-        subtitle=f"Pelaajatilastot • {server_name}",
+        title=stat.name,
+        subtitle=f"Minecraft • {server_name}",
         footer=f"{server_name} • P-iv-Botti Minecraft",
     )
     if stat.is_online:
@@ -1798,6 +1808,8 @@ def build_mine_server_player_stats_card(server_name: str, stats: list[PlayerStat
         rows=rows,
         alignments=["left", "left", "right", "right", "left"],
         col_widths=[2.2, 1.2, 1.8, 1.2, 2.0],
+        primary_col=0,
+        bold_cols=[0, 2],
         max_rows=25,
         overflow="ellipsis",
     )

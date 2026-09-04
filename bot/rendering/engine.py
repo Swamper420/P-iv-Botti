@@ -259,14 +259,17 @@ class CardRenderer:
         self.card = card
         self.theme = theme
 
-        # Load fonts
-        self.font_title = _load_font("bold", 24)
-        self.font_subtitle = _load_font("regular", 14)
-        self.font_body = _load_font("regular", 15)
-        self.font_body_bold = _load_font("bold", 15)
-        self.font_mono = _load_font("mono", 14)
-        self.font_small = _load_font("regular", 12)
-        self.font_small_bold = _load_font("bold", 12)
+        # Load fonts - optimized hierarchy for clarity & density
+        self.font_title = _load_font("bold", 22)
+        self.font_subtitle = _load_font("regular", 13)
+        self.font_body = _load_font("regular", 14)
+        self.font_body_bold = _load_font("bold", 14)
+        self.font_primary_item = _load_font("bold", 16)  # Prioritized & bigger for player names & key items
+        self.font_table_header = _load_font("bold", 12)  # Concise header font
+        self.font_label = _load_font("regular", 13)       # Subtle labels
+        self.font_mono = _load_font("mono", 13)
+        self.font_small = _load_font("regular", 11)
+        self.font_small_bold = _load_font("bold", 11)
 
         # Measurements
         self.card_width = theme.card_width
@@ -292,22 +295,22 @@ class CardRenderer:
         y = self.padding
 
         # Accent top bar (sharp rectangle)
-        y += 4 + 14
+        y += 3 + 8
 
         # Header: Title, Subtitle, Badge
         title_lines = _wrap_text(draw, self.card.title, self.font_title, self.content_width - 120)
-        title_h = sum(_get_text_height(draw, line, self.font_title) + 4 for line in title_lines)
+        title_h = sum(_get_text_height(draw, line, self.font_title) + 3 for line in title_lines)
 
         subtitle_h = 0
         if self.card.subtitle:
             sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, self.content_width - 120)
-            subtitle_h = sum(_get_text_height(draw, line, self.font_subtitle) + 3 for line in sub_lines) + 4
+            subtitle_h = sum(_get_text_height(draw, line, self.font_subtitle) + 2 for line in sub_lines) + 2
 
-        header_h = max(title_h + subtitle_h, 32)
-        y += header_h + 16
+        header_h = max(title_h + subtitle_h, 28)
+        y += header_h + 8
 
         # Header divider
-        y += 1 + 16
+        y += 1 + 8
 
         # Elements
         for el in self.card.elements:
@@ -316,13 +319,13 @@ class CardRenderer:
         # Footer
         if self.card.footer:
             footer_lines = _wrap_text(draw, self.card.footer, self.font_small, self.content_width)
-            footer_h = sum(_get_text_height(draw, line, self.font_small) + 3 for line in footer_lines)
-            y += 8 + footer_h
+            footer_h = sum(_get_text_height(draw, line, self.font_small) + 2 for line in footer_lines)
+            y += 4 + footer_h
 
         y += self.padding
         if self.card.max_height is not None:
-            return min(max(y, 160), self.card.max_height)
-        return max(y, 160)
+            return min(max(y, 80), self.card.max_height)
+        return max(y, 80)
 
     def _measure_element(self, draw: ImageDraw.ImageDraw, element: CardElement) -> int:
         if isinstance(element, TextElement):
@@ -330,21 +333,21 @@ class CardRenderer:
             lines = _wrap_text(draw, element.text, font, self.content_width)
             if element.max_lines is not None and len(lines) > element.max_lines:
                 lines = lines[: element.max_lines]
-            line_h = max(_get_text_height(draw, "Ag", font) + 5, 20)
+            line_h = max(_get_text_height(draw, "Ag", font) + 4, 18)
             return max(len(lines) * line_h, line_h)
 
         elif isinstance(element, KeyValuesElement):
             cols = max(1, min(element.columns, 4))
             rows_count = (len(element.items) + cols - 1) // cols
-            row_h = 32
+            row_h = 28
             return rows_count * row_h
 
         elif isinstance(element, TableElement):
             cols = len(element.headers)
             if cols == 0:
                 return 0
-            header_h = 34
-            row_h = 30
+            header_h = 28
+            row_h = 28
             divider_h = 1
             has_overflow_row = bool(element.max_rows is not None and len(element.rows) > element.max_rows)
             rendered_rows = min(len(element.rows), element.max_rows) if element.max_rows is not None else len(element.rows)
@@ -355,7 +358,7 @@ class CardRenderer:
             return element.margin_top + (1 if element.line else 0) + element.margin_bottom
 
         elif isinstance(element, ProgressBarElement):
-            return 46
+            return 32
 
         elif isinstance(element, CodeBlockElement):
             lines = element.code.splitlines() or [""]
@@ -364,10 +367,10 @@ class CardRenderer:
                 hidden_lines = len(lines) - element.max_lines
                 lines = lines[: element.max_lines]
             total_lines_count = len(lines) + (1 if hidden_lines > 0 else 0)
-            line_h = _get_text_height(draw, "Ag", self.font_mono) + 4
-            return (total_lines_count * line_h) + 20
+            line_h = _get_text_height(draw, "Ag", self.font_mono) + 3
+            return (total_lines_count * line_h) + 14
 
-        return 20
+        return 18
 
     def _draw_all(self, draw: ImageDraw.ImageDraw, total_height: int) -> None:
         # Draw outer card box with sharp corners (NO rounded corners)
@@ -382,11 +385,11 @@ class CardRenderer:
 
         # Accent top bar: sharp rectangle
         draw.rectangle(
-            [(0, 0), (self.card_width - 1, 4)],
+            [(0, 0), (self.card_width - 1, 3)],
             fill=accent,
         )
 
-        y = self.padding + 6
+        y = self.padding + 2
         x = self.padding
 
         # Header: Title & optional Subtitle
@@ -394,13 +397,13 @@ class CardRenderer:
         curr_y = y
         for line in title_lines:
             draw.text((x, curr_y), line, fill=self.theme.text_primary, font=self.font_title)
-            curr_y += _get_text_height(draw, line, self.font_title) + 4
+            curr_y += _get_text_height(draw, line, self.font_title) + 3
 
         if self.card.subtitle:
             sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, self.content_width - 130)
             for line in sub_lines:
                 draw.text((x, curr_y), line, fill=self.theme.text_secondary, font=self.font_subtitle)
-                curr_y += _get_text_height(draw, line, self.font_subtitle) + 3
+                curr_y += _get_text_height(draw, line, self.font_subtitle) + 2
 
         # Header Badge: top right with sharp rectangle
         if self.card.badge:
@@ -408,12 +411,12 @@ class CardRenderer:
             badge_x = self.card_width - self.padding - badge_w
             _draw_sharp_badge(draw, self.card.badge, x=badge_x, y=y + 2, font=self.font_small_bold)
 
-        header_h = max(curr_y - y, 32)
-        y += header_h + 14
+        header_h = max(curr_y - y, 28)
+        y += header_h + 8
 
         # Header Divider: sharp 1px rectangle
         draw.rectangle([(x, y), (x + self.content_width, y)], fill=self.theme.border_color)
-        y += 1 + 16
+        y += 1 + 8
 
         # Draw Elements
         for el in self.card.elements:
@@ -426,7 +429,7 @@ class CardRenderer:
             footer_lines = _wrap_text(draw, self.card.footer, self.font_small, self.content_width)
             for line in footer_lines:
                 draw.text((x, y), line, fill=self.theme.text_muted, font=self.font_small)
-                y += _get_text_height(draw, line, self.font_small) + 3
+                y += _get_text_height(draw, line, self.font_small) + 2
 
     def _draw_element(self, draw: ImageDraw.ImageDraw, element: CardElement, x: int, y: int) -> int:
         if isinstance(element, TextElement):
@@ -437,7 +440,7 @@ class CardRenderer:
                 lines = lines[: element.max_lines]
                 if lines:
                     lines[-1] = _fit_text(draw, f"{lines[-1]}", font, self.content_width, overflow="ellipsis")
-            line_h = max(_get_text_height(draw, "Ag", font) + 5, 20)
+            line_h = max(_get_text_height(draw, "Ag", font) + 4, 18)
             for line in lines:
                 draw.text((x, y), line, fill=color, font=font)
                 y += line_h
@@ -446,7 +449,7 @@ class CardRenderer:
         elif isinstance(element, KeyValuesElement):
             cols = max(1, min(element.columns, 4))
             col_w = self.content_width // cols
-            row_h = 32
+            row_h = 28
 
             for idx, (k, v) in enumerate(element.items):
                 col_idx = idx % cols
@@ -457,18 +460,18 @@ class CardRenderer:
                 avail_w = col_w - 12
                 # Key in secondary color
                 key_text = f"{k}:"
-                fitted_key = _fit_text(draw, key_text, self.font_body, max(20, avail_w - 20), overflow=element.overflow)
-                draw.text((item_x, item_y + 4), fitted_key, fill=self.theme.text_secondary, font=self.font_body)
-                kw = _get_text_width(draw, fitted_key, self.font_body) + 8
+                fitted_key = _fit_text(draw, key_text, self.font_label, max(20, avail_w - 20), overflow=element.overflow)
+                draw.text((item_x, item_y + 4), fitted_key, fill=self.theme.text_secondary, font=self.font_label)
+                kw = _get_text_width(draw, fitted_key, self.font_label) + 6
 
                 max_val_w = max(10, avail_w - kw)
 
-                # Value
+                # Value: prominent bold in text_primary
                 if isinstance(v, Badge):
-                    _draw_sharp_badge(draw, v, item_x + kw, item_y + 3, self.font_small_bold)
+                    _draw_sharp_badge(draw, v, item_x + kw, item_y + 2, self.font_small_bold)
                 else:
                     fitted_val = _fit_text(draw, str(v), self.font_body_bold, max_val_w, overflow=element.overflow)
-                    draw.text((item_x + kw, item_y + 4), fitted_val, fill=self.theme.text_primary, font=self.font_body_bold)
+                    draw.text((item_x + kw, item_y + 3), fitted_val, fill=self.theme.text_primary, font=self.font_body_bold)
 
             rows_count = (len(element.items) + cols - 1) // cols
             return y + (rows_count * row_h)
@@ -478,28 +481,28 @@ class CardRenderer:
             if cols == 0:
                 return y
 
-            header_h = 34
-            row_h = 30
+            header_h = 28
+            row_h = 28
             alignments = element.alignments or ["left"] * cols
             col_widths = _calculate_col_widths(self.content_width, cols, element.col_widths)
 
             # Header background: sharp rectangle (panel_bg)
             draw.rectangle([(x, y), (x + self.content_width, y + header_h)], fill=self.theme.panel_bg)
 
-            # Draw header labels
+            # Draw header labels (concise, subtle uppercase headers)
             curr_x = x
             for i, header in enumerate(element.headers):
                 w_i = col_widths[i]
                 align = alignments[i] if i < len(alignments) else "left"
-                fitted_header = _fit_text(draw, header, self.font_body_bold, w_i - 16, overflow=element.overflow)
-                hw = _get_text_width(draw, fitted_header, self.font_body_bold)
+                fitted_header = _fit_text(draw, header.upper(), self.font_table_header, w_i - 14, overflow=element.overflow)
+                hw = _get_text_width(draw, fitted_header, self.font_table_header)
                 if align == "right":
                     tx = curr_x + w_i - hw - 8
                 elif align == "center":
                     tx = curr_x + (w_i - hw) // 2
                 else:
                     tx = curr_x + 8
-                draw.text((tx, y + 8), fitted_header, fill=self.theme.text_primary, font=self.font_body_bold)
+                draw.text((tx, y + 6), fitted_header, fill=self.theme.text_secondary, font=self.font_table_header)
                 curr_x += w_i
 
             y += header_h
@@ -527,15 +530,32 @@ class CardRenderer:
                     w_i = col_widths[i]
                     val = str(row[i]) if i < len(row) else ""
                     align = alignments[i] if i < len(alignments) else "left"
-                    fitted_val = _fit_text(draw, val, self.font_body, w_i - 16, overflow=element.overflow)
-                    vw = _get_text_width(draw, fitted_val, self.font_body)
+
+                    is_primary = (element.primary_col is not None and i == element.primary_col)
+                    is_bold = is_primary or (element.bold_cols is not None and i in element.bold_cols)
+
+                    if is_primary:
+                        cell_font = self.font_primary_item
+                        cell_color = self.theme.text_primary
+                        y_offset = 4
+                    elif is_bold:
+                        cell_font = self.font_body_bold
+                        cell_color = self.theme.text_primary
+                        y_offset = 5
+                    else:
+                        cell_font = self.font_body
+                        cell_color = self.theme.text_secondary
+                        y_offset = 5
+
+                    fitted_val = _fit_text(draw, val, cell_font, w_i - 14, overflow=element.overflow)
+                    vw = _get_text_width(draw, fitted_val, cell_font)
                     if align == "right":
                         tx = curr_x + w_i - vw - 8
                     elif align == "center":
                         tx = curr_x + (w_i - vw) // 2
                     else:
                         tx = curr_x + 8
-                    draw.text((tx, y + 6), fitted_val, fill=self.theme.text_secondary, font=self.font_body)
+                    draw.text((tx, y + y_offset), fitted_val, fill=cell_color, font=cell_font)
                     curr_x += w_i
 
                 y += row_h
@@ -564,14 +584,14 @@ class CardRenderer:
                 pct = max(0.0, min(1.0, element.value / element.max_value))
             val_text = f"{element.value:g}{element.unit} / {element.max_value:g}{element.unit} ({pct * 100:.1f}%)"
 
-            # Labels row
-            draw.text((x, y), label_text, fill=self.theme.text_primary, font=self.font_body_bold)
-            vw = _get_text_width(draw, val_text, self.font_small)
-            draw.text((x + self.content_width - vw, y + 2), val_text, fill=self.theme.text_secondary, font=self.font_small)
-            y += 24
+            # Labels row: label in secondary and value in bold primary
+            draw.text((x, y), label_text, fill=self.theme.text_secondary, font=self.font_label)
+            vw = _get_text_width(draw, val_text, self.font_body_bold)
+            draw.text((x + self.content_width - vw, y), val_text, fill=self.theme.text_primary, font=self.font_body_bold)
+            y += 18
 
             # Sharp track rectangle (panel_bg)
-            bar_h = 10
+            bar_h = 8
             draw.rectangle(
                 [(x, y), (x + self.content_width, y + bar_h)],
                 fill=self.theme.panel_bg,
@@ -585,7 +605,7 @@ class CardRenderer:
                 bar_color = element.color or self.theme.accent_color
                 draw.rectangle([(x, y), (x + fill_w, y + bar_h)], fill=bar_color)
 
-            y += bar_h + 12
+            y += bar_h + 6
             return y
 
         elif isinstance(element, CodeBlockElement):
@@ -595,10 +615,10 @@ class CardRenderer:
                 hidden_lines = len(lines) - element.max_lines
                 lines = lines[: element.max_lines]
 
-            line_h = _get_text_height(draw, "Ag", self.font_mono) + 4
+            line_h = _get_text_height(draw, "Ag", self.font_mono) + 3
             total_lines_count = len(lines) + (1 if hidden_lines > 0 else 0)
-            block_h = (total_lines_count * line_h) + 20
-            max_code_w = self.content_width - 24
+            block_h = (total_lines_count * line_h) + 14
+            max_code_w = self.content_width - 20
 
             # Background and border: sharp rectangle (NO rounded corners)
             draw.rectangle(
@@ -608,15 +628,15 @@ class CardRenderer:
                 width=1,
             )
 
-            curr_y = y + 10
+            curr_y = y + 7
             for line in lines:
                 fitted_line = _fit_text(draw, line, self.font_mono, max_code_w, overflow=element.overflow)
-                draw.text((x + 12, curr_y), fitted_line, fill=self.theme.text_primary, font=self.font_mono)
+                draw.text((x + 10, curr_y), fitted_line, fill=self.theme.text_primary, font=self.font_mono)
                 curr_y += line_h
 
             if hidden_lines > 0:
                 overflow_text = f"… (+{hidden_lines} riviä)"
-                draw.text((x + 12, curr_y), overflow_text, fill=self.theme.text_muted, font=self.font_mono)
+                draw.text((x + 10, curr_y), overflow_text, fill=self.theme.text_muted, font=self.font_mono)
                 curr_y += line_h
 
             return y + block_h
@@ -694,6 +714,8 @@ def render_table_card(
     col_widths: list[int | float] | None = None,
     max_rows: int | None = None,
     overflow: str = "ellipsis",
+    primary_col: int | None = 0,
+    bold_cols: list[int] | None = None,
     theme: Theme = DARK_THEME,
 ) -> bytes:
     """Convenience function: renders a table card into PNG bytes with sharp corners."""
@@ -707,5 +729,7 @@ def render_table_card(
         col_widths=col_widths,
         max_rows=max_rows,
         overflow=overflow,
+        primary_col=primary_col,
+        bold_cols=bold_cols,
     )
     return render_card(card, theme)
