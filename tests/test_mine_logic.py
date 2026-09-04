@@ -14,11 +14,13 @@ from bot.commands.mine_logic import (
     fetch_mine_allowlist,
     fetch_mine_stats,
     fetch_mine_status,
+    handle_mine_card_command,
     handle_mine_command,
     parse_bds_player_stats,
     parse_mine_command,
 )
 from bot.config import CraftyConfig
+from bot.rendering import render_card
 
 
 class MineLogicTests(unittest.TestCase):
@@ -826,6 +828,93 @@ class MineLogicTests(unittest.TestCase):
         reply = handle_mine_command(self.config, "!mine stats", client=client)
         self.assertIn("📊 <b>Bedrock SMP</b> — <i>Pelaajatilastot (1 pelaajaa):</i>", reply)
         self.assertIn("Steve", reply)
+
+    def test_handle_mine_card_command_status(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {
+                "server_id": "bds-1",
+                "server_name": "Bedrock SMP",
+                "running": True,
+                "server_port": 19132,
+                "world_name": "Bedrock World",
+            }
+        ]
+        client.get_server_stats.return_value = {
+            "running": True,
+            "online": 2,
+            "max_players": 10,
+            "players": ["Steve", "Alex"],
+            "cpu": 12.5,
+            "mem_percent": 35.0,
+            "mem": 1024 * 1024 * 512,
+            "version": "1.21.20",
+        }
+
+        reply_text, card = handle_mine_card_command(self.config, "!mine", client=client)
+        self.assertIn("PÄÄLLÄ", reply_text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.title, "Bedrock SMP")
+        self.assertEqual(card.badge.text, "ONLINE")
+        # Verify card can be rendered into valid PNG image
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_handle_mine_card_command_allowlist(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_allowlist.return_value = ["Steve", "Alex", "Notch"]
+
+        reply_text, card = handle_mine_card_command(self.config, "!mine allowlist", client=client)
+        self.assertIn("Sallitut pelaajat (3)", reply_text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.badge.text, "3 PELAAJAA")
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_handle_mine_card_command_allowlist_add(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.add_to_allowlist.return_value = True
+
+        reply_text, card = handle_mine_card_command(self.config, "!mine allowlist add Jeb", client=client)
+        self.assertIn("lisätty", reply_text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.badge.text, "LISÄTTY")
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_handle_mine_card_command_stats_single_player(self) -> None:
+        client = MagicMock(spec=CraftyClient)
+        client.get_servers.return_value = [
+            {"server_id": "bds-1", "server_name": "Bedrock SMP"}
+        ]
+        client.get_server_logs.return_value = [
+            "[2026-08-27 12:00:00 INFO] Player connected: Steve, xuid: 1111",
+            "[2026-08-27 12:05:00 INFO] Steve fell from a high place",
+            "[2026-08-27 13:00:00 INFO] Player disconnected: Steve, xuid: 1111",
+        ]
+        client.get_server_allowlist_entries.return_value = [{"name": "Steve", "xuid": "1111"}]
+        client.get_server_permissions.return_value = {"1111": "operator"}
+        client.get_online_players.return_value = []
+
+        reply_text, card = handle_mine_card_command(self.config, "!mine stats Steve", client=client)
+        self.assertIn("Pelaajatilastot", reply_text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.title, "Minecraft: Steve")
+        png_bytes = render_card(card)
+        self.assertTrue(png_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_handle_mine_card_command_unconfigured(self) -> None:
+        unconfigured = CraftyConfig()
+        reply_text, card = handle_mine_card_command(unconfigured, "!mine")
+        self.assertIn("ei ole määritetty", reply_text)
+        self.assertIsNotNone(card)
+        self.assertEqual(card.badge.text, "EI KÄYTÖSSÄ")
 
 
 if __name__ == "__main__":

@@ -139,6 +139,51 @@ class RenderingTests(unittest.TestCase):
             render_card(card)
             mock_rounded.assert_not_called()
 
+    def test_table_overflow_and_max_rows(self) -> None:
+        """Verify table renders cleanly with text overflow and max_rows."""
+        long_name = "SuperExtremelyLongPlayerNameThatExceedsTheColumnBoundaryByFar123456789"
+        rows = [[f"Player_{i}", long_name, "1000"] for i in range(20)]
+        card = Card(title="Overflow Test").add_table(
+            headers=["Pelaaja", "Kuvaus", "Pisteet"],
+            rows=rows,
+            col_widths=[1, 3, 1],
+            max_rows=5,
+            overflow="ellipsis",
+        )
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        self.assertEqual(img.width, 800)
+
+    def test_keyvalues_and_codeblock_overflow(self) -> None:
+        """Verify key-values and code blocks truncate gracefully on overflow."""
+        card = (
+            Card(title="KeyValues Overflow")
+            .add_key_value(
+                "ErittäinPitkäAvainNimiJokaOnPitkä",
+                "ErittäinPitkäArvoTekstiJokaMuutenYlittäisiPalstanLeveydenJaAiheuttaisiSotkua",
+            )
+            .add_code_block(
+                "x = '" + "A" * 200 + "'\n" * 15,
+                max_lines=4,
+                overflow="ellipsis",
+            )
+        )
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        self.assertEqual(img.width, 800)
+
+    def test_text_element_max_lines_and_card_max_height(self) -> None:
+        """Verify TextElement max_lines and Card max_height constraints."""
+        card = (
+            Card(title="Max Height Card", max_height=400)
+            .add_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6", max_lines=3)
+            .add_text("Extra long content " * 30)
+        )
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        self.assertLessEqual(img.height, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
+

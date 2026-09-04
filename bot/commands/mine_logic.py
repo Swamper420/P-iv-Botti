@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from bot.config import CraftyConfig
+from bot.rendering import Badge, BadgeColor, Card
 
 LOGGER = logging.getLogger(__name__)
 
@@ -727,17 +728,382 @@ def _resolve_servers(
     return servers, None
 
 
-def fetch_mine_status(
+def build_mine_info_card(
+    title: str,
+    text: str,
+    badge_text: str = "TIETO",
+    badge_color: BadgeColor | str = BadgeColor.BLUE,
+    subtitle: str | None = None,
+) -> Card:
+    """Build a simple informational Card for errors, notices, and help."""
+    return (
+        Card(title=title, subtitle=subtitle, footer="Crafty Controller • P-iv-Botti")
+        .set_badge(badge_text, badge_color)
+        .add_text(text)
+    )
+
+
+def build_mine_status_card(
+    servers_data: list[tuple[dict[str, Any], dict[str, Any], list[str]]],
+) -> Card:
+    """Build a rich Card for Minecraft server(s) status."""
+    if not servers_data:
+        return build_mine_info_card(
+            "Minecraft Palvelimet",
+            "Ei palvelimia saatavilla.",
+            badge_text="TYHJÄ",
+            badge_color=BadgeColor.GRAY,
+        )
+
+    if len(servers_data) == 1:
+        server, stats, online_player_names = servers_data[0]
+        server_id = (
+            server.get("server_id")
+            or server.get("server_uuid")
+            or server.get("id")
+            or stats.get("server_id")
+            or "?"
+        )
+        raw_name = (
+            server.get("server_name")
+            or server.get("name")
+            or stats.get("server_name")
+            or f"Palvelin {server_id}"
+        )
+
+        running_val = stats.get("running")
+        if running_val is None:
+            running_val = server.get("running")
+        status_val = stats.get("status") or server.get("status")
+
+        is_running = False
+        if isinstance(running_val, bool):
+            is_running = running_val
+        elif isinstance(running_val, str):
+            is_running = running_val.strip().lower() in ("true", "1", "running", "started")
+        elif status_val and isinstance(status_val, str):
+            is_running = status_val.strip().lower() in ("running", "started", "online")
+
+        status_lower = str(status_val).strip().lower() if status_val else ""
+        is_starting = (not is_running) and (status_lower in ("starting", "restarting", "käynnistyy"))
+
+        if is_running:
+            badge_label, badge_color = "ONLINE", BadgeColor.GREEN
+        elif is_starting:
+            badge_label, badge_color = "KÄYNNISTYY", BadgeColor.YELLOW
+        else:
+            badge_label, badge_color = "OFFLINE", BadgeColor.RED
+
+        port = (
+            server.get("server_port")
+            or server.get("port")
+            or stats.get("server_port")
+            or stats.get("port")
+        )
+        world = (
+            stats.get("world_name")
+            or stats.get("world")
+            or server.get("world_name")
+            or server.get("world")
+        )
+        motd = (
+            stats.get("motd")
+            or stats.get("desc")
+            or stats.get("description")
+            or server.get("motd")
+            or server.get("desc")
+        )
+        version = (
+            stats.get("version")
+            or server.get("version")
+            or stats.get("server_version")
+            or server.get("server_version")
+        )
+
+        sub_parts = []
+        if port:
+            sub_parts.append(f"Portti: {port}")
+        if world and str(world).strip() != str(raw_name).strip():
+            sub_parts.append(f"Maailma: {world}")
+        sub_title = " • ".join(sub_parts) if sub_parts else None
+
+        card = (
+            Card(title=str(raw_name), subtitle=sub_title, footer="Crafty Controller • P-iv-Botti")
+            .set_badge(badge_label, badge_color)
+        )
+
+        online_players = (
+            stats.get("online")
+            if stats.get("online") is not None
+            else stats.get("players_online", stats.get("online_players"))
+        )
+        max_players = (
+            stats.get("max_players")
+            if stats.get("max_players") is not None
+            else stats.get("maxplayers", stats.get("players_max"))
+        )
+        player_list = stats.get("players") or stats.get("player_list")
+        player_names = _parse_players_field(player_list)
+        if not player_names and online_player_names:
+            player_names = list(online_player_names)
+
+        count_val = online_players or 0
+        if max_players is not None:
+            p_disp = f"{count_val} / {max_players}"
+        elif online_players is not None:
+            p_disp = str(count_val)
+        else:
+            p_disp = "0"
+
+        status_disp = "Päällä" if is_running else ("Käynnistyy" if is_starting else "Pois päältä")
+        card.add_key_value("Tila", status_disp)
+        card.add_key_value("Pelaajat", p_disp)
+
+        if is_running:
+            if version:
+                card.add_key_value("Versio", str(version))
+            if port and not sub_title:
+                card.add_key_value("Portti", str(port))
+
+            cpu = stats.get("cpu")
+            if cpu is not None:
+                try:
+                    cpu_float = float(cpu)
+                    card.add_progress_bar("CPU", value=round(cpu_float, 1), max_value=100.0, unit="%", color="#38bdf8")
+                except (ValueError, TypeError):
+                    card.add_key_value("CPU", str(cpu))
+
+            mem_percent = stats.get("mem_percent") or stats.get("memory_percent")
+            mem_usage = stats.get("mem") or stats.get("memory") or stats.get("mem_usage")
+            formatted_mem = _format_memory(mem_usage)
+            if mem_percent is not None:
+                try:
+                    mem_float = float(mem_percent)
+                    label = f"RAM ({formatted_mem})" if formatted_mem else "RAM"
+                    card.add_progress_bar(label, value=round(mem_float, 1), max_value=100.0, unit="%", color="#a855f7")
+                except (ValueError, TypeError):
+                    if formatted_mem:
+                        card.add_key_value("RAM", formatted_mem)
+            elif formatted_mem:
+                card.add_key_value("RAM", formatted_mem)
+
+        if player_names:
+            card.add_divider()
+            card.add_text("Pelaajat paikalla:", bold=True)
+            rows = [[str(i + 1), name] for i, name in enumerate(player_names)]
+            card.add_table(headers=["#", "Pelaaja"], rows=rows, col_widths=[1, 6], max_rows=10, overflow="ellipsis")
+        elif count_val == 0 and is_running:
+            card.add_text("Ei pelaajia paikalla (aavemaisen hiljaista).", muted=True)
+
+        if motd and str(motd).strip() != str(raw_name).strip() and str(motd).strip() != str(world).strip():
+            card.add_text(f"Kuvaus: {motd}", muted=True)
+
+        return card
+
+    # Multiple servers
+    any_running = False
+    for server, stats, _ in servers_data:
+        running_val = stats.get("running")
+        if running_val is None:
+            running_val = server.get("running")
+        status_val = stats.get("status") or server.get("status")
+        if isinstance(running_val, bool) and running_val:
+            any_running = True
+            break
+        if isinstance(running_val, str) and running_val.strip().lower() in ("true", "1", "running", "started"):
+            any_running = True
+            break
+        if status_val and isinstance(status_val, str) and status_val.strip().lower() in ("running", "started", "online"):
+            any_running = True
+            break
+
+    card = (
+        Card(
+            title="Minecraft Palvelimet",
+            subtitle=f"{len(servers_data)} palvelinta",
+            footer="Crafty Controller • P-iv-Botti",
+        )
+        .set_badge("ONLINE" if any_running else "OFFLINE", BadgeColor.GREEN if any_running else BadgeColor.RED)
+    )
+
+    for idx, (server, stats, online_player_names) in enumerate(servers_data):
+        if idx > 0:
+            card.add_divider()
+        server_id = server.get("server_id") or server.get("server_uuid") or server.get("id") or stats.get("server_id") or "?"
+        raw_name = server.get("server_name") or server.get("name") or stats.get("server_name") or f"Palvelin {server_id}"
+
+        running_val = stats.get("running")
+        if running_val is None:
+            running_val = server.get("running")
+        status_val = stats.get("status") or server.get("status")
+        is_running = False
+        if isinstance(running_val, bool):
+            is_running = running_val
+        elif isinstance(running_val, str):
+            is_running = running_val.strip().lower() in ("true", "1", "running", "started")
+        elif status_val and isinstance(status_val, str):
+            is_running = status_val.strip().lower() in ("running", "started", "online")
+
+        status_lower = str(status_val).strip().lower() if status_val else ""
+        is_starting = (not is_running) and (status_lower in ("starting", "restarting", "käynnistyy"))
+
+        if is_running:
+            s_badge = Badge("PÄÄLLÄ", BadgeColor.GREEN)
+        elif is_starting:
+            s_badge = Badge("KÄYNNISTYY", BadgeColor.YELLOW)
+        else:
+            s_badge = Badge("OFFLINE", BadgeColor.RED)
+
+        online_players = stats.get("online") if stats.get("online") is not None else stats.get("players_online", stats.get("online_players"))
+        max_players = stats.get("max_players") if stats.get("max_players") is not None else stats.get("maxplayers", stats.get("players_max"))
+        player_list = stats.get("players") or stats.get("player_list")
+        player_names = _parse_players_field(player_list)
+        if not player_names and online_player_names:
+            player_names = list(online_player_names)
+
+        count_val = online_players or 0
+        p_disp = f"{count_val} / {max_players}" if max_players is not None else str(count_val)
+        version = stats.get("version") or server.get("version") or stats.get("server_version") or server.get("server_version")
+
+        card.add_text(str(raw_name), bold=True)
+        items: list[tuple[str, str | Badge]] = [
+            ("Tila", s_badge),
+            ("Pelaajat", p_disp),
+        ]
+        if version:
+            items.append(("Versio", str(version)))
+        card.add_key_values(items, columns=2)
+        if player_names:
+            card.add_text(f"Pelaajat: {', '.join(player_names)}")
+
+    return card
+
+
+def build_mine_allowlist_card(servers_allowlist: list[tuple[str, list[str]]]) -> Card:
+    """Build a rich Card for Minecraft server allowlist."""
+    if not servers_allowlist:
+        return build_mine_info_card(
+            "Minecraft Allowlist",
+            "Ei palvelimia saatavilla.",
+            badge_text="TYHJÄ",
+            badge_color=BadgeColor.GRAY,
+        )
+
+    if len(servers_allowlist) == 1:
+        server_name, names = servers_allowlist[0]
+        card = Card(
+            title=f"Minecraft: {server_name}",
+            subtitle=f"Sallitut pelaajat ({len(names)})",
+            footer="Crafty Controller • P-iv-Botti",
+        )
+        if names:
+            card.set_badge(f"{len(names)} PELAAJAA", BadgeColor.BLUE)
+            rows = [[str(i + 1), name] for i, name in enumerate(names)]
+            card.add_table(
+                headers=["#", "Pelaaja"],
+                rows=rows,
+                col_widths=[1, 5],
+                max_rows=25,
+                overflow="ellipsis",
+            )
+        else:
+            card.set_badge("TYHJÄ", BadgeColor.GRAY)
+            card.add_text("Allowlist on tyhjä tai sitä ei saatu luettua.", muted=True)
+            card.add_code_block("!mine allowlist add <pelaaja>")
+        return card
+
+    total_players = sum(len(names) for _, names in servers_allowlist)
+    card = Card(
+        title="Minecraft Allowlist",
+        subtitle=f"{len(servers_allowlist)} palvelinta • {total_players} pelaajaa yhteensä",
+        footer="Crafty Controller • P-iv-Botti",
+    ).set_badge(f"{total_players} PELAAJAA", BadgeColor.BLUE)
+
+    for idx, (server_name, names) in enumerate(servers_allowlist):
+        if idx > 0:
+            card.add_divider()
+        card.add_text(f"Palvelin: {server_name} ({len(names)} pelaajaa)", bold=True)
+        if names:
+            rows = [[str(i + 1), name] for i, name in enumerate(names)]
+            card.add_table(
+                headers=["#", "Pelaaja"],
+                rows=rows,
+                col_widths=[1, 5],
+                max_rows=10,
+                overflow="ellipsis",
+            )
+        else:
+            card.add_text("Allowlist on tyhjä.", muted=True)
+
+    return card
+
+
+def build_mine_allowlist_add_card(results: list[tuple[str, str, bool, str]]) -> Card:
+    """Build a rich Card for allowlist add result."""
+    if not results:
+        return build_mine_info_card(
+            "Minecraft Allowlist",
+            "Ei palvelimia valittuna.",
+            badge_text="VIRHE",
+            badge_color=BadgeColor.RED,
+        )
+
+    all_ok = all(r[2] for r in results)
+    server_name = results[0][0]
+    player_name = results[0][1]
+
+    if len(results) == 1:
+        if all_ok:
+            return (
+                Card(
+                    title="Minecraft Allowlist",
+                    subtitle=f"Palvelin: {server_name}",
+                    footer="Crafty Controller • P-iv-Botti",
+                )
+                .set_badge("LISÄTTY", BadgeColor.GREEN)
+                .add_key_value("Pelaaja", player_name)
+                .add_key_value("Palvelin", server_name)
+                .add_key_value("Toiminto", "allowlist add")
+                .add_text(f"Pelaaja {player_name} lisätty sallittujen listalle!")
+            )
+        else:
+            return (
+                Card(
+                    title="Minecraft Allowlist Virhe",
+                    subtitle=f"Palvelin: {server_name}",
+                    footer="Crafty Controller • P-iv-Botti",
+                )
+                .set_badge("VIRHE", BadgeColor.RED)
+                .add_text(results[0][3])
+            )
+
+    badge = Badge("LISÄTTY", BadgeColor.GREEN) if all_ok else Badge(
+        "OSITTAINEN" if any(r[2] for r in results) else "VIRHE",
+        BadgeColor.YELLOW if any(r[2] for r in results) else BadgeColor.RED,
+    )
+    card = Card(
+        title="Minecraft Allowlist",
+        subtitle=f"Pelaaja: {player_name}",
+        footer="Crafty Controller • P-iv-Botti",
+    ).set_badge(badge.text, badge.color)
+    for s_name, _, ok, msg in results:
+        status_txt = "✅ Lisätty" if ok else f"❌ {msg}"
+        card.add_text(f"{s_name}: {status_txt}")
+    return card
+
+
+def fetch_mine_status_card(
     config: CraftyConfig,
     server_query: str = "",
     client: CraftyClient | None = None,
-) -> str:
-    """Fetch status of Crafty Controller Minecraft servers and return formatted reply."""
+) -> tuple[str, Card | None]:
+    """Fetch status of Crafty Controller Minecraft servers and return (formatted_text, card)."""
     if not config.is_configured:
-        return (
+        text = (
             "Crafty Controller -integraatiota ei ole määritetty "
             "(.env puuttuu CRAFTY_API_TOKEN)."
         )
+        return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="EI KÄYTÖSSÄ", badge_color=BadgeColor.GRAY)
 
     client = client or CraftyClient(config)
 
@@ -746,28 +1112,34 @@ def fetch_mine_status(
     except HTTPError as exc:
         LOGGER.warning("Crafty API HTTP error: %s", exc)
         if exc.code in (401, 403):
-            return (
+            text = (
                 f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
                 "Tarkista CRAFTY_API_TOKEN."
             )
-        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+            return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="AUTH VIRHE", badge_color=BadgeColor.RED)
+        text = f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+        return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="API VIRHE", badge_color=BadgeColor.RED)
     except URLError as exc:
         LOGGER.warning("Crafty API connection error: %s", exc)
-        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        text = f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="YHTEYSVIRHE", badge_color=BadgeColor.RED)
     except Exception as exc:
         LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
-        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        text = f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="VIRHE", badge_color=BadgeColor.RED)
 
     if not servers:
-        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        text = "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        return text, build_mine_info_card("Minecraft Palvelin", text, badge_text="TYHJÄ", badge_color=BadgeColor.YELLOW)
 
     selected_servers, err_msg = _resolve_servers(
         servers, server_query, config.default_server_id
     )
     if err_msg:
-        return err_msg
+        return err_msg, build_mine_info_card("Minecraft Palvelin", err_msg, badge_text="EI LÖYTYNYT", badge_color=BadgeColor.YELLOW)
 
     server_blocks: list[str] = []
+    servers_data: list[tuple[dict[str, Any], dict[str, Any], list[str]]] = []
     for server in selected_servers:
         s_id = (
             server.get("server_id")
@@ -782,7 +1154,6 @@ def fetch_mine_status(
             except Exception as exc:
                 LOGGER.warning("Failed to fetch stats for server %s: %s", s_id, exc)
 
-            # Fetch online player names when the stats don't include them
             has_players_in_stats = bool(
                 _parse_players_field(
                     stats.get("players") or stats.get("player_list")
@@ -797,21 +1168,35 @@ def fetch_mine_status(
         server_blocks.append(
             _format_server_block(server, stats, online_player_names)
         )
+        servers_data.append((server, stats, online_player_names))
 
-    return "\n\n".join(server_blocks)
+    reply_text = "\n\n".join(server_blocks)
+    card = build_mine_status_card(servers_data)
+    return reply_text, card
 
 
-def fetch_mine_allowlist(
+def fetch_mine_status(
     config: CraftyConfig,
     server_query: str = "",
     client: CraftyClient | None = None,
 ) -> str:
-    """Fetch allowlist (whitelist) of Minecraft players for server(s)."""
+    """Fetch status of Crafty Controller Minecraft servers and return formatted reply."""
+    reply_text, _ = fetch_mine_status_card(config, server_query=server_query, client=client)
+    return reply_text
+
+
+def fetch_mine_allowlist_card(
+    config: CraftyConfig,
+    server_query: str = "",
+    client: CraftyClient | None = None,
+) -> tuple[str, Card | None]:
+    """Fetch allowlist (whitelist) of Minecraft players for server(s) and return (text, card)."""
     if not config.is_configured:
-        return (
+        text = (
             "Crafty Controller -integraatiota ei ole määritetty "
             "(.env puuttuu CRAFTY_API_TOKEN)."
         )
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="EI KÄYTÖSSÄ", badge_color=BadgeColor.GRAY)
 
     client = client or CraftyClient(config)
 
@@ -820,28 +1205,34 @@ def fetch_mine_allowlist(
     except HTTPError as exc:
         LOGGER.warning("Crafty API HTTP error: %s", exc)
         if exc.code in (401, 403):
-            return (
+            text = (
                 f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
                 "Tarkista CRAFTY_API_TOKEN."
             )
-        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+            return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="AUTH VIRHE", badge_color=BadgeColor.RED)
+        text = f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="API VIRHE", badge_color=BadgeColor.RED)
     except URLError as exc:
         LOGGER.warning("Crafty API connection error: %s", exc)
-        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        text = f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="YHTEYSVIRHE", badge_color=BadgeColor.RED)
     except Exception as exc:
         LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
-        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        text = f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="VIRHE", badge_color=BadgeColor.RED)
 
     if not servers:
-        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        text = "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="TYHJÄ", badge_color=BadgeColor.YELLOW)
 
     selected_servers, err_msg = _resolve_servers(
         servers, server_query, config.default_server_id
     )
     if err_msg:
-        return err_msg
+        return err_msg, build_mine_info_card("Minecraft Allowlist", err_msg, badge_text="EI LÖYTYNYT", badge_color=BadgeColor.YELLOW)
 
     blocks: list[str] = []
+    servers_allowlist: list[tuple[str, list[str]]] = []
     for server in selected_servers:
         s_id = (
             server.get("server_id")
@@ -859,6 +1250,7 @@ def fetch_mine_allowlist(
             continue
 
         names = client.get_server_allowlist(s_id)
+        servers_allowlist.append((str(raw_name), names))
         if names:
             escaped_names = [f"• <b>{html.escape(n)}</b>" for n in names]
             names_str = "\n".join(escaped_names)
@@ -871,31 +1263,46 @@ def fetch_mine_allowlist(
                 f"Lisää pelaaja komennolla: <code>!mine allowlist add &lt;pelaaja&gt;</code>"
             )
 
-    return "\n\n".join(blocks)
+    reply_text = "\n\n".join(blocks)
+    card = build_mine_allowlist_card(servers_allowlist)
+    return reply_text, card
 
 
-def add_mine_allowlist(
+def fetch_mine_allowlist(
+    config: CraftyConfig,
+    server_query: str = "",
+    client: CraftyClient | None = None,
+) -> str:
+    """Fetch allowlist (whitelist) of Minecraft players for server(s)."""
+    reply_text, _ = fetch_mine_allowlist_card(config, server_query=server_query, client=client)
+    return reply_text
+
+
+def add_mine_allowlist_card(
     config: CraftyConfig,
     player_name: str,
     server_query: str = "",
     client: CraftyClient | None = None,
-) -> str:
-    """Add a player to the allowlist on the selected Minecraft server."""
+) -> tuple[str, Card | None]:
+    """Add a player to the allowlist on the selected Minecraft server and return (text, card)."""
     if not config.is_configured:
-        return (
+        text = (
             "Crafty Controller -integraatiota ei ole määritetty "
             "(.env puuttuu CRAFTY_API_TOKEN)."
         )
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="EI KÄYTÖSSÄ", badge_color=BadgeColor.GRAY)
 
     clean_name = player_name.strip()
     if not clean_name:
-        return "Määritä pelaajanimi: <code>!mine allowlist add &lt;pelaajanimi&gt;</code>"
+        text = "Määritä pelaajanimi: <code>!mine allowlist add &lt;pelaajanimi&gt;</code>"
+        return text, build_mine_info_card("Minecraft Allowlist", "Määritä pelaajanimi: !mine allowlist add <pelaaja>", badge_text="OHJE", badge_color=BadgeColor.BLUE)
 
     if not _PLAYER_NAME_RE.fullmatch(clean_name):
-        return (
+        text = (
             f"Virheellinen pelaajanimi '<b>{html.escape(clean_name)}</b>'. "
             "Bedrock-gamertag voi sisältää kirjaimia, numeroita, välilyöntejä ja alaviivoja (1-32 merkkiä)."
         )
+        return text, build_mine_info_card("Minecraft Allowlist", f"Virheellinen pelaajanimi '{clean_name}'.", badge_text="VIRHE", badge_color=BadgeColor.RED)
 
     client = client or CraftyClient(config)
 
@@ -904,36 +1311,40 @@ def add_mine_allowlist(
     except HTTPError as exc:
         LOGGER.warning("Crafty API HTTP error: %s", exc)
         if exc.code in (401, 403):
-            return (
+            text = (
                 f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
                 "Tarkista CRAFTY_API_TOKEN."
             )
-        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+            return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="AUTH VIRHE", badge_color=BadgeColor.RED)
+        text = f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="API VIRHE", badge_color=BadgeColor.RED)
     except URLError as exc:
         LOGGER.warning("Crafty API connection error: %s", exc)
-        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        text = f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="YHTEYSVIRHE", badge_color=BadgeColor.RED)
     except Exception as exc:
         LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
-        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        text = f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="VIRHE", badge_color=BadgeColor.RED)
 
     if not servers:
-        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        text = "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        return text, build_mine_info_card("Minecraft Allowlist", text, badge_text="TYHJÄ", badge_color=BadgeColor.YELLOW)
 
-    # If server_query was passed, try to match. If it didn't match and was 1 server total, fallback
     selected_servers, err_msg = _resolve_servers(
         servers, server_query, config.default_server_id
     )
 
-    # If server_query failed to match any server, check if server_query was actually part of the player name when single server exists
     if err_msg and len(servers) == 1 and not config.default_server_id:
         selected_servers = servers
         clean_name = f"{server_query} {clean_name}".strip()
         err_msg = None
 
     if err_msg:
-        return err_msg
+        return err_msg, build_mine_info_card("Minecraft Allowlist", err_msg, badge_text="EI LÖYTYNYT", badge_color=BadgeColor.YELLOW)
 
-    results: list[str] = []
+    results_text: list[str] = []
+    card_results: list[tuple[str, str, bool, str]] = []
     for server in selected_servers:
         s_id = (
             server.get("server_id")
@@ -952,21 +1363,39 @@ def add_mine_allowlist(
 
         try:
             client.add_to_allowlist(s_id, clean_name)
-            results.append(
+            results_text.append(
                 f"✅ Pelaaja <b>{html.escape(clean_name)}</b> lisätty palvelimen <b>{server_name}</b> sallittujen listalle (<code>allowlist add</code>)!"
             )
+            card_results.append((str(raw_name), clean_name, True, "Lisätty sallittujen listalle"))
         except HTTPError as exc:
             LOGGER.warning("Failed to execute allowlist command on server %s: %s", s_id, exc)
-            results.append(
+            results_text.append(
                 f"❌ Komennon suoritus epäonnistui palvelimella <b>{server_name}</b> (HTTP {exc.code}): {exc.reason}"
             )
+            card_results.append((str(raw_name), clean_name, False, f"HTTP {exc.code}: {exc.reason}"))
         except Exception as exc:
             LOGGER.warning("Failed to execute allowlist command on server %s: %s", s_id, exc)
-            results.append(
+            results_text.append(
                 f"❌ Virhe lisättäessä pelaajaa palvelimelle <b>{server_name}</b>: {exc}"
             )
+            card_results.append((str(raw_name), clean_name, False, str(exc)))
 
-    return "\n\n".join(results)
+    reply_text = "\n\n".join(results_text)
+    card = build_mine_allowlist_add_card(card_results)
+    return reply_text, card
+
+
+def add_mine_allowlist(
+    config: CraftyConfig,
+    player_name: str,
+    server_query: str = "",
+    client: CraftyClient | None = None,
+) -> str:
+    """Add a player to the allowlist on the selected Minecraft server."""
+    reply_text, _ = add_mine_allowlist_card(
+        config, player_name=player_name, server_query=server_query, client=client
+    )
+    return reply_text
 
 
 def _format_duration(seconds: float | int) -> str:
@@ -1306,18 +1735,88 @@ def _format_server_player_stats(server_name: str, stats: list[PlayerStatInfo]) -
     return "\n\n".join(sections)
 
 
-def fetch_mine_stats(
+def build_mine_single_player_stat_card(stat: PlayerStatInfo, server_name: str) -> Card:
+    """Build a rich Card for a single player profile."""
+    card = Card(
+        title=f"Minecraft: {stat.name}",
+        subtitle=f"Pelaajatilastot • {server_name}",
+        footer=f"{server_name} • P-iv-Botti Minecraft",
+    )
+    if stat.is_online:
+        card.set_badge("PAIKALLA", BadgeColor.GREEN)
+        session_str = _format_duration(stat.current_session_seconds)
+        status_disp = f"Paikalla (istunto {session_str})"
+    else:
+        card.set_badge("OFFLINE", BadgeColor.GRAY)
+        status_disp = "Poissa linjoilta"
+
+    card.add_key_value("Tila", status_disp)
+    card.add_key_value("Rooli", stat.role or "Pelaaja")
+    card.add_key_value("Peliaika", _format_duration(stat.total_playtime_seconds))
+    card.add_key_value("Istunnot", f"{stat.session_count} kpl")
+    card.add_key_value("Kuolemat", f"{stat.deaths} kpl")
+    card.add_key_value("Chat", f"{stat.chat_count} viestiä" if stat.chat_count > 0 else "0")
+    if stat.first_seen:
+        card.add_key_value("Ensikäynti", stat.first_seen)
+    if stat.last_seen:
+        card.add_key_value("Viimeksi", stat.last_seen)
+    if stat.xuid:
+        card.add_key_value("XUID", str(stat.xuid))
+
+    if stat.death_causes:
+        card.add_divider()
+        card.add_text(f"Kuolinsyyt: {_format_death_causes(stat.death_causes)}")
+
+    return card
+
+
+def build_mine_server_player_stats_card(server_name: str, stats: list[PlayerStatInfo]) -> Card:
+    """Build a rich Card overview of all player stats on a server."""
+    card = Card(
+        title="Minecraft Pelaajatilastot",
+        subtitle=f"Palvelin: {server_name} • {len(stats)} pelaajaa",
+        footer=f"{server_name} • P-iv-Botti Minecraft",
+    )
+    if not stats:
+        card.set_badge("TYHJÄ", BadgeColor.GRAY)
+        card.add_text("Ei vielä tallennettuja pelaajatilastoja tai lokitapahtumia.", muted=True)
+        return card
+
+    card.set_badge(f"{len(stats)} PELAAJAA", BadgeColor.BLUE)
+    rows = []
+    for s in stats:
+        role_tag = f" ({s.role})" if s.role and s.role != "Pelaaja" else ""
+        p_name = f"{s.name}{role_tag}"
+        status_str = "Paikalla" if s.is_online else "Poissa"
+        playtime_str = _format_duration(s.total_playtime_seconds)
+        deaths_str = str(s.deaths)
+        last_seen_str = s.last_seen or "-"
+        rows.append([p_name, status_str, playtime_str, deaths_str, last_seen_str])
+
+    card.add_table(
+        headers=["Pelaaja", "Tila", "Peliaika", "Kuolemat", "Viimeksi"],
+        rows=rows,
+        alignments=["left", "left", "right", "right", "left"],
+        col_widths=[2.2, 1.2, 1.8, 1.2, 2.0],
+        max_rows=25,
+        overflow="ellipsis",
+    )
+    return card
+
+
+def fetch_mine_stats_card(
     config: CraftyConfig,
     server_query: str = "",
     player_query: str = "",
     client: CraftyClient | None = None,
-) -> str:
-    """Fetch player statistics for Minecraft Bedrock server(s)."""
+) -> tuple[str, Card | None]:
+    """Fetch player statistics for Minecraft Bedrock server(s) and return (text, card)."""
     if not config.is_configured:
-        return (
+        text = (
             "Crafty Controller -integraatiota ei ole määritetty "
             "(.env puuttuu CRAFTY_API_TOKEN)."
         )
+        return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="EI KÄYTÖSSÄ", badge_color=BadgeColor.GRAY)
 
     client = client or CraftyClient(config)
 
@@ -1326,20 +1825,25 @@ def fetch_mine_stats(
     except HTTPError as exc:
         LOGGER.warning("Crafty API HTTP error: %s", exc)
         if exc.code in (401, 403):
-            return (
+            text = (
                 f"Crafty Controller API -autentikointivirhe (HTTP {exc.code}): "
                 "Tarkista CRAFTY_API_TOKEN."
             )
-        return f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+            return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="AUTH VIRHE", badge_color=BadgeColor.RED)
+        text = f"Crafty Controller API -virhe (HTTP {exc.code}): {exc.reason}"
+        return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="API VIRHE", badge_color=BadgeColor.RED)
     except URLError as exc:
         LOGGER.warning("Crafty API connection error: %s", exc)
-        return f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        text = f"Yhteysvirhe Crafty Controlleriin: {exc.reason}"
+        return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="YHTEYSVIRHE", badge_color=BadgeColor.RED)
     except Exception as exc:
         LOGGER.exception("Unexpected error querying Crafty API: %s", exc)
-        return f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        text = f"Virhe haettaessa tietoja Crafty Controllerista: {exc}"
+        return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="VIRHE", badge_color=BadgeColor.RED)
 
     if not servers:
-        return "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        text = "Crafty Controllerista ei löytynyt yhtään palvelinta."
+        return text, build_mine_info_card("Minecraft Tilastot", text, badge_text="TYHJÄ", badge_color=BadgeColor.YELLOW)
 
     # Smart server & player resolution
     target_player = player_query.strip()
@@ -1350,7 +1854,6 @@ def fetch_mine_stats(
     # If server_query did not match a server, check if server_query was actually the player name (or part of it)
     if err_msg:
         if len(servers) == 1 or config.default_server_id:
-            # Fallback to default server or single server and treat whole query as player name
             fallback_servers, _ = _resolve_servers(servers, "", config.default_server_id)
             if fallback_servers:
                 selected_servers = fallback_servers
@@ -1361,9 +1864,11 @@ def fetch_mine_stats(
                 err_msg = None
 
     if err_msg:
-        return err_msg
+        return err_msg, build_mine_info_card("Minecraft Tilastot", err_msg, badge_text="EI LÖYTYNYT", badge_color=BadgeColor.YELLOW)
 
     results: list[str] = []
+    card: Card | None = None
+
     for server in selected_servers:
         s_id = (
             server.get("server_id")
@@ -1401,21 +1906,72 @@ def fetch_mine_stats(
                 )
                 if matched_stat:
                     results.append(_format_single_player_stat(matched_stat, server_name))
+                    card = build_mine_single_player_stat_card(matched_stat, server_name)
                 else:
                     results.append(
                         f"Pelaajaa '<b>{html.escape(target_player)}</b>' ei löytynyt "
                         f"palvelimen <b>{html.escape(server_name)}</b> tilastoista tai sallittujen listalta."
                     )
+                    card = build_mine_info_card(
+                        "Minecraft Haku",
+                        f"Pelaajaa '{target_player}' ei löytynyt palvelimen {server_name} tilastoista.",
+                        badge_text="EI LÖYTYNYT",
+                        badge_color=BadgeColor.RED,
+                        subtitle=f"Hakusana: {target_player}",
+                    )
             else:
                 results.append(_format_server_player_stats(server_name, player_stats))
+                card = build_mine_server_player_stats_card(server_name, player_stats)
 
         except Exception as exc:
             LOGGER.exception("Failed to fetch player stats for server %s: %s", s_id, exc)
             results.append(
                 f"❌ Virhe haettaessa pelaajatilastoja palvelimelta <b>{html.escape(server_name)}</b>: {exc}"
             )
+            card = build_mine_info_card(
+                "Minecraft Tilastot",
+                f"Virhe haettaessa pelaajatilastoja: {exc}",
+                badge_text="VIRHE",
+                badge_color=BadgeColor.RED,
+            )
 
-    return "\n\n".join(results)
+    return "\n\n".join(results), card
+
+
+def fetch_mine_stats(
+    config: CraftyConfig,
+    server_query: str = "",
+    player_query: str = "",
+    client: CraftyClient | None = None,
+) -> str:
+    """Fetch player statistics for Minecraft Bedrock server(s)."""
+    reply_text, _ = fetch_mine_stats_card(
+        config, server_query=server_query, player_query=player_query, client=client
+    )
+    return reply_text
+
+
+def handle_mine_card_command(
+    config: CraftyConfig,
+    text: str | None,
+    client: CraftyClient | None = None,
+) -> tuple[str, Card | None]:
+    """Entrypoint for processing !mine command strings and routing appropriately."""
+    is_match, subcommand, server_query, player_name = parse_mine_command(text)
+    if not is_match:
+        return "", None
+
+    if subcommand == "allowlist_list":
+        return fetch_mine_allowlist_card(config, server_query=server_query, client=client)
+    if subcommand == "allowlist_add":
+        return add_mine_allowlist_card(
+            config, player_name=player_name, server_query=server_query, client=client
+        )
+    if subcommand == "stats":
+        return fetch_mine_stats_card(
+            config, server_query=server_query, player_query=player_name, client=client
+        )
+    return fetch_mine_status_card(config, server_query=server_query, client=client)
 
 
 def handle_mine_command(
@@ -1424,19 +1980,6 @@ def handle_mine_command(
     client: CraftyClient | None = None,
 ) -> str:
     """Entrypoint for processing !mine command strings and routing appropriately."""
-    is_match, subcommand, server_query, player_name = parse_mine_command(text)
-    if not is_match:
-        return ""
-
-    if subcommand == "allowlist_list":
-        return fetch_mine_allowlist(config, server_query=server_query, client=client)
-    if subcommand == "allowlist_add":
-        return add_mine_allowlist(
-            config, player_name=player_name, server_query=server_query, client=client
-        )
-    if subcommand == "stats":
-        return fetch_mine_stats(
-            config, server_query=server_query, player_query=player_name, client=client
-        )
-    return fetch_mine_status(config, server_query=server_query, client=client)
+    reply_text, _ = handle_mine_card_command(config, text, client=client)
+    return reply_text
 

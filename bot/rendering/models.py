@@ -81,12 +81,15 @@ class TextElement(CardElement):
     muted: bool = False
     bold: bool = False
     color: str | None = None
+    max_lines: int | None = None
+    overflow: str = "wrap"  # "wrap", "ellipsis", "clip"
 
 
 @dataclass
 class KeyValuesElement(CardElement):
     items: list[tuple[str, str | Badge]] = field(default_factory=list)
     columns: int = 2
+    overflow: str = "ellipsis"  # "ellipsis", "clip", "none"
 
 
 @dataclass
@@ -94,6 +97,9 @@ class TableElement(CardElement):
     headers: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
     alignments: list[str] | None = None  # "left", "center", "right"
+    col_widths: list[int | float] | None = None  # explicit pixels or proportional weights
+    max_rows: int | None = None
+    overflow: str = "ellipsis"  # "ellipsis", "clip", "none"
 
 
 @dataclass
@@ -116,6 +122,8 @@ class ProgressBarElement(CardElement):
 class CodeBlockElement(CardElement):
     code: str
     language: str | None = None
+    max_lines: int | None = None
+    overflow: str = "ellipsis"  # "ellipsis", "wrap", "clip"
 
 
 @dataclass
@@ -126,6 +134,7 @@ class Card:
     accent_color: str | None = None
     footer: str | None = None
     elements: list[CardElement] = field(default_factory=list)
+    max_height: int | None = None
 
     def set_badge(
         self,
@@ -155,6 +164,8 @@ class Card:
         muted: bool = False,
         bold: bool = False,
         color: str | None = None,
+        max_lines: int | None = None,
+        overflow: str = "wrap",
     ) -> Card:
         self.elements.append(
             TextElement(
@@ -163,6 +174,8 @@ class Card:
                 muted=muted,
                 bold=bold,
                 color=color,
+                max_lines=max_lines,
+                overflow=overflow,
             )
         )
         return self
@@ -175,9 +188,14 @@ class Card:
         return self
 
     def add_key_values(
-        self, items: list[tuple[str, str | Badge]], columns: int = 2
+        self,
+        items: list[tuple[str, str | Badge]],
+        columns: int = 2,
+        overflow: str = "ellipsis",
     ) -> Card:
-        self.elements.append(KeyValuesElement(items=list(items), columns=columns))
+        self.elements.append(
+            KeyValuesElement(items=list(items), columns=columns, overflow=overflow)
+        )
         return self
 
     def add_table(
@@ -185,9 +203,19 @@ class Card:
         headers: list[str],
         rows: list[list[str]],
         alignments: list[str] | None = None,
+        col_widths: list[int | float] | None = None,
+        max_rows: int | None = None,
+        overflow: str = "ellipsis",
     ) -> Card:
         self.elements.append(
-            TableElement(headers=headers, rows=rows, alignments=alignments)
+            TableElement(
+                headers=headers,
+                rows=rows,
+                alignments=alignments,
+                col_widths=col_widths,
+                max_rows=max_rows,
+                overflow=overflow,
+            )
         )
         return self
 
@@ -218,6 +246,19 @@ class Card:
         )
         return self
 
-    def add_code_block(self, code: str, language: str | None = None) -> Card:
-        self.elements.append(CodeBlockElement(code=code, language=language))
+    def add_code_block(
+        self,
+        code: str,
+        language: str | None = None,
+        max_lines: int | None = None,
+        overflow: str = "ellipsis",
+    ) -> Card:
+        self.elements.append(
+            CodeBlockElement(
+                code=code,
+                language=language,
+                max_lines=max_lines,
+                overflow=overflow,
+            )
+        )
         return self
