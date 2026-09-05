@@ -15,6 +15,7 @@ from bot.rendering.models import (
     CodeBlockElement,
     DividerElement,
     ImageElement,
+    ImageGridElement,
     KeyValuesElement,
     ProgressBarElement,
     TableElement,
@@ -292,6 +293,91 @@ def _compute_image_display_size(
     return content_width, max(1, scaled_h)
 
 
+def _compute_grid_cell_display_size(
+    orig_w: int,
+    orig_h: int,
+    cell_width: int,
+    max_cell_height: int | None,
+) -> tuple[int, int]:
+    """Aspect-fit a single grid cell, capping height to keep 2x2 compact."""
+    if orig_w <= 0 or orig_h <= 0 or cell_width <= 0:
+        return max(1, cell_width), 120
+    scaled_h = int(round(orig_h * (cell_width / orig_w)))
+    if (
+        max_cell_height is not None
+        and max_cell_height > 0
+        and scaled_h > max_cell_height
+    ):
+        disp_h = max_cell_height
+        disp_w = max(1, int(round(orig_w * (disp_h / orig_h))))
+        return min(disp_w, cell_width), disp_h
+    return cell_width, max(1, scaled_h)
+
+
+def _compute_image_grid_layout(
+    sizes: list[tuple[int, int] | None],
+    content_width: int,
+    gap: int,
+    max_cell_height: int | None,
+) -> tuple[list[tuple[int, int, int, int]], int]:
+    """Compute 2-column grid layout.
+
+    Returns ``(cells, total_h)`` where each cell is
+    ``(disp_w, disp_h, x_rel, y_rel)`` in content-relative coordinates.
+    Corrupt images (``None`` size) become ``cell_width x 120`` placeholders
+    so measure and draw stay consistent.
+    """
+    n = len(sizes)
+    if n == 0 or content_width <= 0:
+        return [], 0
+    cols = 1 if n == 1 else 2
+    rows = (n + cols - 1) // cols
+    gap = max(0, gap)
+    cell_width = (
+        (content_width - gap * (cols - 1)) // cols if cols > 1 else content_width
+    )
+    cell_width = max(1, cell_width)
+
+    disps: list[tuple[int, int]] = []
+    for size in sizes:
+        if size is None:
+            disps.append((cell_width, 120))
+        else:
+            disps.append(
+                _compute_grid_cell_display_size(
+                    size[0], size[1], cell_width, max_cell_height
+                )
+            )
+
+    row_heights: list[int] = []
+    for r in range(rows):
+        heights = [
+            disps[r * cols + c][1]
+            for c in range(cols)
+            if r * cols + c < n
+        ]
+        row_heights.append(max(heights) if heights else 0)
+
+    total_h = sum(row_heights) + gap * (rows - 1) if rows else 0
+
+    cells: list[tuple[int, int, int, int]] = [ (0, 0, 0, 0) ] * n
+    y_cursor = 0
+    for r in range(rows):
+        row_h = row_heights[r]
+        for c in range(cols):
+            idx = r * cols + c
+            if idx >= n:
+                break
+            disp_w, disp_h = disps[idx]
+            x_cell = c * (cell_width + gap) if cols > 1 else 0
+            x_rel = x_cell + (cell_width - disp_w) // 2
+            y_rel = y_cursor + (row_h - disp_h) // 2
+            cells[idx] = (disp_w, disp_h, x_rel, y_rel)
+        y_cursor += row_h + gap
+
+    return cells, total_h
+
+
 class CardRenderer:
     def __init__(self, card: Card, theme: Theme = DARK_THEME) -> None:
         self.card = card
@@ -411,6 +497,9 @@ class CardRenderer:
         elif isinstance(element, ImageElement):
             return self._measure_image_element(draw, element)
 
+        elif isinstance(element, ImageGridElement):
+            return self._measure_image_grid_element(draw, element)
+
         return 18
 
     def _measure_image_element(
@@ -435,6 +524,31 @@ class CardRenderer:
                     for line in cap_lines
                 )
                 total += 6 + cap_h
+        return total
+
+    def _measure_image_grid_element(
+        self, draw: ImageDraw.ImageDraw, element: ImageGridElement
+    ) -> int:
+        images = list(element.images or [])[:4]
+        if not images:
+            base_h = 0
+        else:
+            sizes = [_probe_image_size(b) for b in images]
+            _cells, total_h = _compute_image_grid_layout(
+                sizes, self.content_width, element.gap, element.max_cell_height
+            )
+            base_h = total_h
+        total = base_h
+        if element.caption:
+            cap_lines = _wrap_text(
+                draw, element.caption, self.font_small, self.content_width
+            )
+            if cap_lines:
+                cap_h = sum(
+                    _get_text_height(draw, line, self.font_small) + 2
+                    for line in cap_lines
+                )
+                total += (6 + cap_h) if images else cap_h
         return total
 
     def _draw_all(
@@ -718,6 +832,9 @@ class CardRenderer:
         elif isinstance(element, ImageElement):
             return self._draw_image_element(draw, img, element, x, y)
 
+        elif isinstance(element, ImageGridElement):
+            return self._draw_image_grid_element(draw, img, element, x, y)
+
         return y
 
     def _draw_image_element(
@@ -793,6 +910,119 @@ class CardRenderer:
                     width=1,
                 )
                 y += disp_h
+
+        if element.caption:
+            cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+            y += 6
+            for line in cap_lines:
+                lw = _get_text_width(draw, line, self.font_small)
+                tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
+                draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
+                y += _get_text_height(draw, line, self.font_small) + 2
+        return y
+
+    def _paste_cell_image(
+        self, img: Image.Image, image_bytes: bytes, abs_x: int, abs_y: int, disp_w: int, disp_h: int
+    ) -> bool:
+        """Paste and resize a single cell image. Returns True on success."""
+        try:
+            with Image.open(BytesIO(image_bytes)) as pil_img:
+                try:
+                    from PIL import ImageOps
+
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                except Exception:
+                    pass
+                if pil_img.mode in ("RGBA", "LA", "PA"):
+                    canvas = Image.new("RGB", pil_img.size, self.theme.card_bg)
+                    try:
+                        alpha = pil_img.split()[-1]
+                        canvas.paste(pil_img.convert("RGB"), mask=alpha)
+                        pil_img = canvas
+                    except Exception:
+                        pil_img = pil_img.convert("RGB")
+                else:
+                    pil_img = pil_img.convert("RGB")
+                if (pil_img.width, pil_img.height) != (disp_w, disp_h):
+                    pil_img = pil_img.resize((disp_w, disp_h), Image.LANCZOS)
+                img.paste(pil_img, (abs_x, abs_y))
+                return True
+        except Exception:
+            return False
+
+    def _draw_grid_label(
+        self, draw: ImageDraw.ImageDraw, abs_x: int, abs_y: int, label: str
+    ) -> None:
+        """Draw a small sharp angle-number badge at the cell top-left."""
+        text = str(label).strip()
+        if not text:
+            return
+        pad_h, pad_v = 5, 2
+        text_w = _get_text_width(draw, text, self.font_small_bold)
+        text_h = _get_text_height(draw, text, self.font_small_bold)
+        box_w, box_h = text_w + pad_h * 2, text_h + pad_v * 2
+        bx, by = abs_x + 4, abs_y + 4
+        draw.rectangle(
+            [(bx, by), (bx + box_w, by + box_h)],
+            fill=self.theme.panel_bg,
+            outline=self.theme.border_color,
+            width=1,
+        )
+        draw.text((bx + pad_h, by + pad_v), text, fill=self.theme.text_primary, font=self.font_small_bold)
+
+    def _draw_image_grid_element(
+        self,
+        draw: ImageDraw.ImageDraw,
+        img: Image.Image,
+        element: ImageGridElement,
+        x: int,
+        y: int,
+    ) -> int:
+        """Draw up to 2x2 photo grid with sharp borders and angle labels."""
+        images = list(element.images or [])[:4]
+        if not images:
+            if element.caption:
+                cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+                for line in cap_lines:
+                    lw = _get_text_width(draw, line, self.font_small)
+                    tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
+                    draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
+                    y += _get_text_height(draw, line, self.font_small) + 2
+            return y
+
+        sizes = [_probe_image_size(b) for b in images]
+        cells, total_h = _compute_image_grid_layout(
+            sizes, self.content_width, element.gap, element.max_cell_height
+        )
+        labels = list(element.labels or [])
+
+        for idx, (disp_w, disp_h, x_rel, y_rel) in enumerate(cells):
+            abs_x, abs_y = x + x_rel, y + y_rel
+            ok = self._paste_cell_image(img, images[idx], abs_x, abs_y, disp_w, disp_h)
+            if not ok:
+                draw.rectangle(
+                    [(abs_x, abs_y), (abs_x + disp_w, abs_y + disp_h)],
+                    fill=self.theme.panel_bg,
+                    outline=self.theme.border_color,
+                    width=1,
+                )
+                draw.text(
+                    (abs_x + 8, abs_y + 12),
+                    "Kuvaa ei voitu näyttää",
+                    fill=self.theme.text_muted,
+                    font=self.font_small,
+                )
+            else:
+                # Sharp border around each photo (NO rounded corners)
+                draw.rectangle(
+                    [(abs_x, abs_y), (abs_x + disp_w, abs_y + disp_h)],
+                    outline=self.theme.border_color,
+                    width=1,
+                )
+            if idx < len(labels) and labels[idx]:
+                self._draw_grid_label(draw, abs_x, abs_y, labels[idx])
+
+        y += total_h
 
         if element.caption:
             cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)

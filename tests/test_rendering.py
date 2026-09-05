@@ -227,6 +227,44 @@ class RenderingTests(unittest.TestCase):
             render_card(card)
             mock_rounded.assert_not_called()
 
+    def test_image_grid_renders_2x2(self) -> None:
+        """Grid element must render up to 4 photos with labels and caption."""
+        imgs = [self._make_test_jpeg(color=c) for c in ("#334155", "#475569", "#64748b", "#94a3b8")]
+        for n in (1, 2, 3, 4):
+            card = Card(title=f"Ruudukko {n}").add_image_grid(
+                imgs[:n], labels=[str(i + 1) for i in range(n)], caption="Kaisaniemi"
+            )
+            raw_bytes = render_card(card)
+            img = self._assert_valid_png(raw_bytes)
+            self.assertEqual(img.width, 800)
+
+    def test_image_grid_caps_at_four(self) -> None:
+        """More than 4 images must be capped to a 2x2 grid."""
+        imgs = [self._make_test_jpeg() for _ in range(6)]
+        card = Card(title="Paljon").add_image_grid(imgs, labels=[str(i + 1) for i in range(6)])
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        self.assertEqual(img.width, 800)
+        # 2 rows of capped cells stay compact (well below 3-row height).
+        self.assertLess(img.height, 900)
+
+    def test_image_grid_corrupt_and_empty(self) -> None:
+        """Corrupt bytes render as placeholders; empty grid renders caption only."""
+        card = Card(title="Rikki ruudukko").add_image_grid(
+            [b"not-an-image", self._make_test_jpeg()], labels=["1", "2"]
+        )
+        self._assert_valid_png(render_card(card))
+        empty = Card(title="Tyhjä").add_image_grid([], caption="ei kuvia")
+        self._assert_valid_png(render_card(empty))
+
+    def test_image_grid_no_rounded_corners(self) -> None:
+        """Grid rendering must never use rounded rectangles."""
+        imgs = [self._make_test_jpeg(), self._make_test_jpeg()]
+        card = Card(title="Kulmat").add_image_grid(imgs, labels=["1", "2"])
+        with patch("PIL.ImageDraw.ImageDraw.rounded_rectangle") as mock_rounded:
+            render_card(card)
+            mock_rounded.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

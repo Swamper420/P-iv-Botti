@@ -136,6 +136,15 @@ class ImageElement(CardElement):
 
 
 @dataclass
+class ImageGridElement(CardElement):
+    images: list[bytes] = field(default_factory=list)
+    labels: list[str] | None = None
+    caption: str | None = None
+    max_cell_height: int | None = 280
+    gap: int = 8
+
+
+@dataclass
 class Card:
     title: str
     subtitle: str | None = None
@@ -287,6 +296,25 @@ class Card:
                 image_bytes=image_bytes,
                 caption=caption,
                 max_height=max_height,
+            )
+        )
+        return self
+
+    def add_image_grid(
+        self,
+        images: list[bytes],
+        labels: list[str] | None = None,
+        caption: str | None = None,
+        max_cell_height: int | None = 280,
+        gap: int = 8,
+    ) -> Card:
+        self.elements.append(
+            ImageGridElement(
+                images=list(images),
+                labels=list(labels) if labels is not None else None,
+                caption=caption,
+                max_cell_height=max_cell_height,
+                gap=gap,
             )
         )
         return self

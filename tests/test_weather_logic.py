@@ -6,8 +6,11 @@ from unittest.mock import patch
 from PIL import Image
 
 from bot.commands.weather_logic import (
+    MAX_CAM_ANGLES_GRID,
+    CameraFrame,
     WeatherCamResult,
     WeatherInfo,
+    _select_preset_index,
     accent_color_for_condition,
     badge_color_for_condition,
     build_weather_card,
@@ -25,7 +28,7 @@ from bot.commands.weather_logic import (
     wind_direction_label,
 )
 from bot.config import BotConfig, Cs2RssConfig, NaamaConfig, WeatherConfig
-from bot.rendering import BadgeColor, ImageElement, render_card
+from bot.rendering import BadgeColor, ImageElement, ImageGridElement, render_card
 
 
 def _make_config(api_key: str = "") -> BotConfig:
@@ -89,19 +92,34 @@ def _make_weather_info(**overrides) -> WeatherInfo:
 class WeatherLogicTests(unittest.TestCase):
     def test_extracts_location_from_weather_command(self) -> None:
         self.assertEqual(
-            parse_weather_camera_location("!sääkuva Helsinki"), (True, "Helsinki")
+            parse_weather_camera_location("!sääkuva Helsinki"), (True, "Helsinki", None)
         )
 
     def test_extracts_location_from_ascii_alias(self) -> None:
         self.assertEqual(
-            parse_weather_camera_location("  !saakuva  Oulu "), (True, "Oulu")
+            parse_weather_camera_location("  !saakuva  Oulu "), (True, "Oulu", None)
         )
 
     def test_matches_command_without_location(self) -> None:
-        self.assertEqual(parse_weather_camera_location("!sääkuva"), (True, None))
+        self.assertEqual(parse_weather_camera_location("!sääkuva"), (True, None, None))
 
     def test_ignores_non_command_text(self) -> None:
-        self.assertEqual(parse_weather_camera_location("hello test"), (False, None))
+        self.assertEqual(parse_weather_camera_location("hello test"), (False, None, None))
+
+    def test_extracts_angle_number(self) -> None:
+        self.assertEqual(
+            parse_weather_camera_location("!sääkuva Helsinki 2"), (True, "Helsinki", 2)
+        )
+        self.assertEqual(
+            parse_weather_camera_location("!sääkuva Uusi Kaupunki 3"),
+            (True, "Uusi Kaupunki", 3),
+        )
+        self.assertEqual(
+            parse_weather_camera_location("  !saakuva Oulu  02  "), (True, "Oulu", 2)
+        )
+
+    def test_lone_number_is_missing_location(self) -> None:
+        self.assertEqual(parse_weather_camera_location("!sääkuva 2"), (True, None, None))
 
     def test_weather_image_fetch_sends_digitraffic_headers(self) -> None:
         location_data = {
@@ -316,6 +334,154 @@ class WeatherLogicTests(unittest.TestCase):
         self.assertEqual(card.badge.text, "VIRHE")
         raw = render_card(card)
         self.assertTrue(raw.startswith(b"\x89PNG"))
+
+    def test_select_preset_index_trailing_digit(self) -> None:
+        self.assertEqual(_select_preset_index(["C01501", "C01502", "C01503"], 2), 1)
+        self.assertEqual(_select_preset_index(["C01501", "C01502"], 2), 1)
+        # Fallback to positional index when ids do not end with the angle.
+        self.assertEqual(_select_preset_index(["CAM_A", "CAM_B"], 2), 1)
+        self.assertIsNone(_select_preset_index(["C01501", "C01502"], 5))
+        self.assertIsNone(_select_preset_index([], 1))
+
+    def test_cam_details_single_angle(self) -> None:
+        location_data = {
+            "features": [
+                {
+                    "properties": {
+                        "name": "Helsinki",
+                        "presets": [{"id": "C01501"}, {"id": "C01502"}, {"id": "C01503"}],
+                    }
+                }
+            ]
+        }
+        config = _make_config()
+        with (
+            patch("bot.commands.weather_logic._fetch_json", return_value=location_data),
+            patch(
+                "bot.commands.weather_logic._download_bytes",
+                side_effect=lambda url, *a, **k: f"bytes-for-{url}".encode(),
+            ) as download,
+        ):
+            result = get_weather_cam_details("helsinki", config, angle=2)
+        self.assertEqual(result.camera_id, "C01502")
+        self.assertEqual(result.selected_angle, 2)
+        self.assertEqual(result.total_angles, 3)
+        self.assertEqual(len(result.frames), 1)
+        self.assertTrue(download.call_args[0][0].endswith("/C01502.jpg"))
+
+    def test_cam_details_angle_out_of_range(self) -> None:
+        location_data = {
+            "features": [
+                {"properties": {"name": "Helsinki", "presets": [{"id": "C1"}, {"id": "C2"}]}}
+            ]
+        }
+        config = _make_config()
+        with patch("bot.commands.weather_logic._fetch_json", return_value=location_data):
+            result = get_weather_cam_details("helsinki", config, angle=5)
+        self.assertIsNone(result.image_bytes)
+        self.assertIn("1–2", result.error or "")
+        self.assertEqual(result.total_angles, 2)
+
+    def test_cam_details_grid_fetches_up_to_four(self) -> None:
+        location_data = {
+            "features": [
+                {
+                    "properties": {
+                        "name": "Helsinki",
+                        "presets": [
+                            {"id": "C1"},
+                            {"id": "C2"},
+                            {"id": "C3"},
+                            {"id": "C4"},
+                            {"id": "C5"},
+                        ],
+                    }
+                }
+            ]
+        }
+        config = _make_config()
+        with (
+            patch("bot.commands.weather_logic._fetch_json", return_value=location_data),
+            patch(
+                "bot.commands.weather_logic._download_bytes", return_value=b"img"
+            ) as download,
+        ):
+            result = get_weather_cam_details("helsinki", config)
+        self.assertEqual(len(result.frames), MAX_CAM_ANGLES_GRID)
+        self.assertEqual(result.total_angles, 5)
+        self.assertEqual(download.call_count, MAX_CAM_ANGLES_GRID)
+        self.assertEqual([f.angle_number for f in result.frames], [1, 2, 3, 4])
+
+    def test_cam_details_grid_skips_failed_downloads(self) -> None:
+        location_data = {
+            "features": [
+                {
+                    "properties": {
+                        "name": "Helsinki",
+                        "presets": [{"id": "C1"}, {"id": "C2"}, {"id": "C3"}],
+                    }
+                }
+            ]
+        }
+        config = _make_config()
+
+        def _fail_c2(url: str, *args, **kwargs) -> bytes:
+            if url.endswith("/C2.jpg"):
+                raise OSError("boom")
+            return b"img"
+
+        with (
+            patch("bot.commands.weather_logic._fetch_json", return_value=location_data),
+            patch("bot.commands.weather_logic._download_bytes", side_effect=_fail_c2),
+        ):
+            result = get_weather_cam_details("helsinki", config)
+        self.assertEqual([f.camera_id for f in result.frames], ["C1", "C3"])
+        self.assertIsNotNone(result.image_bytes)
+
+    def test_build_card_grid_uses_image_grid_element(self) -> None:
+        frames = [
+            CameraFrame(camera_id=f"C{i}", image_bytes=_make_jpeg_bytes(), angle_number=i)
+            for i in (1, 2, 3)
+        ]
+        cam = WeatherCamResult(
+            station_name="Kaisaniemi", frames=frames, total_angles=3
+        )
+        card = build_weather_card("Helsinki", cam=cam, weather=_make_weather_info())
+        self.assertTrue(any(isinstance(el, ImageGridElement) for el in card.elements))
+        self.assertFalse(any(isinstance(el, ImageElement) for el in card.elements))
+        raw = render_card(card)
+        img = Image.open(BytesIO(raw))
+        self.assertEqual(img.width, 800)
+        self.assertGreater(img.height, 600)
+
+    def test_build_card_single_angle_uses_single_image(self) -> None:
+        frame = CameraFrame(
+            camera_id="C01502", image_bytes=_make_jpeg_bytes(), angle_number=2
+        )
+        cam = WeatherCamResult(
+            station_name="Helsinki",
+            frames=[frame],
+            selected_angle=2,
+            total_angles=3,
+            image_bytes=frame.image_bytes,
+            camera_id=frame.camera_id,
+        )
+        card = build_weather_card("Helsinki", cam=cam, weather=_make_weather_info())
+        self.assertTrue(any(isinstance(el, ImageElement) for el in card.elements))
+        self.assertIn("2/3", card.subtitle or "")
+        raw = render_card(card)
+        self.assertTrue(raw.startswith(b"\x89PNG"))
+
+    def test_fallback_grid_lists_all_cameras(self) -> None:
+        frames = [
+            CameraFrame(camera_id="C1", image_bytes=b"a", angle_number=1),
+            CameraFrame(camera_id="C2", image_bytes=b"b", angle_number=2),
+        ]
+        cam = WeatherCamResult(station_name="Helsinki", frames=frames, total_angles=2)
+        text = build_weather_fallback_text("Helsinki", cam=cam, weather=_make_weather_info())
+        self.assertIn("Kamerat (2)", text)
+        self.assertIn("C1", text)
+        self.assertIn("!sääkuva Helsinki", text)
 
 
 if __name__ == "__main__":

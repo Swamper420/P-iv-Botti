@@ -3,7 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -15,9 +15,19 @@ from bot.rendering import BadgeColor, Card
 LOGGER = logging.getLogger(__name__)
 
 
-def parse_weather_camera_location(text: str | None) -> tuple[bool, str | None]:
+def parse_weather_camera_location(
+    text: str | None,
+) -> tuple[bool, str | None, int | None]:
+    """Parse ``!sääkuva <kaupunki> [kulma]``.
+
+    Returns ``(matched, location_query, angle_number)`` where ``angle_number``
+    is a 1-based camera-angle selector (``None`` when not given). The trailing
+    token is treated as an angle only when it is pure digits and a city name
+    precedes it, so ``!sääkuva Helsinki 2`` selects angle 2 while
+    ``!sääkuva 2`` alone is treated as a missing city (usage).
+    """
     if text is None:
-        return False, None
+        return False, None, None
 
     stripped = text.strip()
     lowered = stripped.casefold()
@@ -30,10 +40,30 @@ def parse_weather_camera_location(text: str | None) -> tuple[bool, str | None]:
         if rest and not rest[0].isspace():
             continue
 
-        location = rest.strip()
-        return True, location or None
+        rest_stripped = rest.strip()
+        if not rest_stripped:
+            return True, None, None
 
-    return False, None
+        # A lone number without a city is not a valid query -> usage.
+        if rest_stripped.isdigit():
+            return True, None, None
+
+        # Split off a trailing angle number, e.g. "Uusi Kaupunki 2".
+        head, sep, tail = rest_stripped.rpartition(" ")
+        # rpartition always returns 3 parts; sep == "" means no space found.
+        if sep and tail.isdigit():
+            location = head.strip() or None
+            if location is None:
+                return True, None, None
+            try:
+                angle = int(tail)
+            except ValueError:
+                return True, rest_stripped, None
+            return True, location, angle
+
+        return True, rest_stripped, None
+
+    return False, None, None
 
 
 def _fetch_json(url: str, timeout_seconds: int, headers: dict[str, str] | None = None) -> dict:
@@ -99,11 +129,28 @@ class WeatherInfo:
 
 
 @dataclass
+class CameraFrame:
+    camera_id: str
+    image_bytes: bytes
+    angle_number: int  # 1-based preset order
+
+
+@dataclass
 class WeatherCamResult:
     image_bytes: bytes | None = None
     camera_id: str | None = None
     station_name: str | None = None
     error: str | None = None
+    frames: list[CameraFrame] = field(default_factory=list)
+    selected_angle: int | None = None
+    total_angles: int | None = None
+
+    def __post_init__(self) -> None:
+        # Backward-compat convenience: mirror first/selected frame.
+        if self.image_bytes is None and self.frames:
+            self.image_bytes = self.frames[0].image_bytes
+        if self.camera_id is None and self.frames:
+            self.camera_id = self.frames[0].camera_id
 
 
 def _as_float(value: object) -> float | None:
@@ -248,11 +295,82 @@ def _find_station_feature(data: dict, location_query: str) -> dict | None:
     return None
 
 
+MAX_CAM_ANGLES_GRID = 4
+
+
+def _extract_preset_ids(props: dict) -> list[str]:
+    """Extract ordered camera preset ids, e.g. ['C01501', 'C01502', ...]."""
+    try:
+        presets = props.get("presets")
+    except AttributeError:
+        return []
+    if not isinstance(presets, list):
+        return []
+    ids: list[str] = []
+    for preset in presets:
+        if not isinstance(preset, dict):
+            continue
+        raw_id = preset.get("id")
+        if raw_id is None:
+            continue
+        cleaned = str(raw_id).strip()
+        if cleaned:
+            ids.append(cleaned)
+    return ids
+
+
+def _select_preset_index(preset_ids: list[str], angle: int) -> int | None:
+    """Select preset index for a 1-based angle number.
+
+    Primary rule follows Traficom convention where the last digit of the
+    camera id is the angle (1, 2, 3, ...). Falls back to positional index
+    for stations whose ids do not follow that convention.
+    """
+    if not preset_ids:
+        return None
+    angle_str = str(angle)
+    for idx, pid in enumerate(preset_ids):
+        if pid.endswith(angle_str):
+            return idx
+    if 1 <= angle <= len(preset_ids):
+        return angle - 1
+    return None
+
+
+def _download_preset_image(cfg: WeatherConfig, camera_id: str) -> bytes | None:
+    image_url = f"{cfg.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
+    image_headers = {
+        "Digitraffic-User": cfg.digitraffic_user,
+        "If-None-Match": "",
+    }
+    try:
+        img_data = _download_bytes(image_url, cfg.timeout_seconds, headers=image_headers)
+    except TimeoutError:
+        LOGGER.warning("Weather camera image download timed out for %s", camera_id)
+        return None
+    except (HTTPError, URLError, OSError):
+        LOGGER.warning("Weather camera image download failed for %s", camera_id)
+        return None
+    if not img_data:
+        return None
+    return img_data
+
+
 def get_weather_cam_details(
-    location_query: str, config: WeatherConfig | BotConfig
+    location_query: str,
+    config: WeatherConfig | BotConfig,
+    angle: int | None = None,
+    max_images: int = MAX_CAM_ANGLES_GRID,
 ) -> WeatherCamResult:
-    """Fetch Digitraffic station + camera image with rich metadata."""
+    """Fetch Digitraffic station + camera image(s) with rich metadata.
+
+    Without ``angle`` downloads up to ``max_images`` presets for a 2x2 grid.
+    With ``angle`` (1-based) downloads only that camera direction.
+    """
     cfg = _extract_weather_config(config)
+    if max_images < 1:
+        max_images = 1
+    max_images = min(max_images, MAX_CAM_ANGLES_GRID)
     station_headers = {
         "Digitraffic-User": cfg.digitraffic_user,
         "If-None-Match": "",
@@ -278,42 +396,82 @@ def get_weather_cam_details(
         return WeatherCamResult(error="Sijaintia ei löytynyt")
 
     props = location_json.get("properties", {})
+    if not isinstance(props, dict):
+        props = {}
     station_name = str(props.get("name", "")).strip() or None
-    try:
-        presets = props["presets"]
-        camera_id = str(presets[0]["id"])
-    except (KeyError, IndexError, TypeError, AttributeError):
+    preset_ids = _extract_preset_ids(props)
+    if not preset_ids:
         return WeatherCamResult(
             station_name=station_name, error="Kamera ei ole saatavilla"
         )
 
-    image_url = f"{cfg.weathercam_image_base_url.rstrip('/')}/{camera_id}.jpg"
-    image_headers = {
-        "Digitraffic-User": cfg.digitraffic_user,
-        "If-None-Match": "",
-    }
-    try:
-        img_data = _download_bytes(
-            image_url, cfg.timeout_seconds, headers=image_headers
+    total = len(preset_ids)
+
+    # Single-angle mode: "!sääkuva <kaupunki> <kulma>".
+    if angle is not None:
+        if angle < 1:
+            return WeatherCamResult(
+                station_name=station_name,
+                error=f"Virheellinen kulma {angle} (saatavilla 1–{total})",
+                selected_angle=angle,
+                total_angles=total,
+            )
+        idx = _select_preset_index(preset_ids, angle)
+        if idx is None:
+            return WeatherCamResult(
+                station_name=station_name,
+                error=f"Kulmaa {angle} ei löytynyt (saatavilla 1–{total})",
+                selected_angle=angle,
+                total_angles=total,
+            )
+        camera_id = preset_ids[idx]
+        img_data = _download_preset_image(cfg, camera_id)
+        if img_data is None:
+            return WeatherCamResult(
+                camera_id=camera_id,
+                station_name=station_name,
+                error="Kuvan lataus epäonnistui",
+                selected_angle=angle,
+                total_angles=total,
+            )
+        frame = CameraFrame(
+            camera_id=camera_id, image_bytes=img_data, angle_number=idx + 1
         )
-    except TimeoutError:
-        LOGGER.exception("Weather camera image download timed out")
         return WeatherCamResult(
-            camera_id=camera_id, station_name=station_name, error="Kuvan lataus aikakatkesi"
-        )
-    except (HTTPError, URLError, OSError):
-        LOGGER.exception("Weather camera image download failed")
-        return WeatherCamResult(
-            camera_id=camera_id, station_name=station_name, error="Kuvan lataus epäonnistui"
+            image_bytes=img_data,
+            camera_id=camera_id,
+            station_name=station_name,
+            frames=[frame],
+            selected_angle=angle,
+            total_angles=total,
         )
 
-    if not img_data:
+    # Grid mode: up to max_images presets (2x2).
+    wanted_ids = preset_ids[:max_images]
+    frames: list[CameraFrame] = []
+    for idx, camera_id in enumerate(wanted_ids):
+        img_data = _download_preset_image(cfg, camera_id)
+        if img_data is None:
+            continue
+        frames.append(
+            CameraFrame(camera_id=camera_id, image_bytes=img_data, angle_number=idx + 1)
+        )
+
+    if not frames:
+        first_id = wanted_ids[0] if wanted_ids else None
         return WeatherCamResult(
-            camera_id=camera_id, station_name=station_name, error="Kuvan lataus epäonnistui"
+            camera_id=first_id,
+            station_name=station_name,
+            error="Kuvien lataus epäonnistui",
+            total_angles=total,
         )
 
     return WeatherCamResult(
-        image_bytes=img_data, camera_id=camera_id, station_name=station_name
+        image_bytes=frames[0].image_bytes,
+        camera_id=frames[0].camera_id,
+        station_name=station_name,
+        frames=frames,
+        total_angles=total,
     )
 
 
@@ -456,6 +614,47 @@ def _capitalize_fi(text: str) -> str:
     return text[0].upper() + text[1:]
 
 
+def _cam_display_frames(cam: WeatherCamResult | None) -> list[CameraFrame]:
+    """Frames to display (max 4), with backward compat for legacy single-image results."""
+    if cam is None:
+        return []
+    if cam.frames:
+        return list(cam.frames[:MAX_CAM_ANGLES_GRID])
+    if cam.image_bytes:
+        angle = cam.selected_angle or 1
+        return [
+            CameraFrame(
+                camera_id=cam.camera_id or "kamera",
+                image_bytes=cam.image_bytes,
+                angle_number=angle,
+            )
+        ]
+    return []
+
+
+def _format_cam_caption(
+    station_name: str | None,
+    frames: list[CameraFrame],
+    total_angles: int | None,
+    selected_angle: int | None,
+) -> str | None:
+    if not frames:
+        return None
+    station = (station_name or "").strip()
+    if selected_angle is not None or len(frames) == 1:
+        frame = frames[0]
+        base = f"{station} • {frame.camera_id}" if station else frame.camera_id
+        if total_angles and total_angles > 1:
+            shown_angle = frame.angle_number
+            return f"{base} (kulma {shown_angle}/{total_angles})"
+        return base
+    labels = ", ".join(str(f.angle_number) for f in frames)
+    count = f"{len(frames)}/{total_angles}" if total_angles and total_angles > len(frames) else str(len(frames))
+    if station:
+        return f"{station} • kulmat {labels} ({count} kuvaa)"
+    return f"Kulmat {labels} ({count} kuvaa)"
+
+
 def build_weather_fallback_text(
     location_query: str,
     cam: WeatherCamResult | None = None,
@@ -508,8 +707,36 @@ def build_weather_fallback_text(
         lines.append(f"🌡️ {location_query}: säätiedot eivät saatavilla")
 
     if cam is not None:
-        if cam.station_name or cam.camera_id:
-            cam_label = cam.station_name or location_query
+        frames = _cam_display_frames(cam)
+        cam_label = (cam.station_name or location_query).strip() or location_query
+        if len(frames) == 1 and (cam.selected_angle is not None or len(frames) == 1):
+            frame = frames[0]
+            if cam.selected_angle is not None and cam.total_angles and cam.total_angles > 1:
+                lines.append(
+                    f"Kamera: {cam_label} ({frame.camera_id}, kulma {frame.angle_number}/{cam.total_angles})"
+                )
+            elif cam.total_angles and cam.total_angles > 1:
+                lines.append(
+                    f"Kamera: {cam_label} ({frame.camera_id}, kulma {frame.angle_number}/{cam.total_angles})"
+                )
+            elif cam.camera_id or cam_label:
+                if frame.camera_id:
+                    lines.append(f"Kamera: {cam_label} ({frame.camera_id})")
+                else:
+                    lines.append(f"Kamera: {cam_label}")
+        elif len(frames) > 1:
+            ids = ", ".join(f.camera_id for f in frames)
+            lines.append(f"Kamerat ({len(frames)}): {cam_label} ({ids})")
+            if cam.total_angles and cam.total_angles > len(frames):
+                lines.append(
+                    f"Näytetään {len(frames)}/{cam.total_angles} kulmaa. "
+                    f"Yksittäinen kulma: !sääkuva {location_query} <numero>"
+                )
+            else:
+                lines.append(
+                    f"Yksittäinen kulma: !sääkuva {location_query} <numero> (1–{len(frames)})"
+                )
+        elif cam.station_name or cam.camera_id:
             if cam.camera_id:
                 lines.append(f"Kamera: {cam_label} ({cam.camera_id})")
             else:
@@ -536,10 +763,12 @@ def build_weather_card(
     cam: WeatherCamResult | None = None,
     weather: WeatherInfo | None = None,
 ) -> Card:
-    """Build a pleasing, informative picture card combining cam photo + weather."""
+    """Build a pleasing, informative picture card combining cam photo(s) + weather."""
     station_name = cam.station_name if cam and cam.station_name else None
-    camera_id = cam.camera_id if cam and cam.camera_id else None
-    cam_bytes = cam.image_bytes if cam and cam.image_bytes else None
+    frames = _cam_display_frames(cam)
+    total_angles = cam.total_angles if cam else None
+    selected_angle = cam.selected_angle if cam else None
+    is_single_angle = selected_angle is not None or len(frames) <= 1
 
     if weather is not None:
         emoji = weather_emoji(weather.condition_id, weather.icon)
@@ -553,8 +782,20 @@ def build_weather_card(
         subtitle_parts: list[str] = []
         if station_name:
             subtitle_parts.append(station_name)
-        if camera_id:
-            subtitle_parts.append(f"kamera {camera_id}")
+        if frames:
+            if is_single_angle:
+                frame = frames[0]
+                if total_angles and total_angles > 1:
+                    subtitle_parts.append(
+                        f"kamera {frame.camera_id} (kulma {frame.angle_number}/{total_angles})"
+                    )
+                else:
+                    subtitle_parts.append(f"kamera {frame.camera_id}")
+            else:
+                if total_angles and total_angles > len(frames):
+                    subtitle_parts.append(f"{len(frames)}/{total_angles} kulmaa")
+                else:
+                    subtitle_parts.append(f"{len(frames)} kuvaa")
         obs = format_observation_time(weather)
         if obs:
             subtitle_parts.append(f"havainto {obs}")
@@ -579,14 +820,20 @@ def build_weather_card(
             bold=True,
         )
 
-        if cam_bytes:
-            caption_parts: list[str] = []
-            if station_name:
-                caption_parts.append(station_name)
-            if camera_id:
-                caption_parts.append(camera_id)
-            caption = " • ".join(caption_parts) if caption_parts else None
-            card.add_image(cam_bytes, caption=caption, max_height=420)
+        if frames:
+            caption = _format_cam_caption(station_name, frames, total_angles, selected_angle)
+            if is_single_angle:
+                card.add_image(frames[0].image_bytes, caption=caption, max_height=420)
+            else:
+                card.add_image_grid(
+                    [f.image_bytes for f in frames],
+                    labels=[str(f.angle_number) for f in frames],
+                    caption=caption,
+                )
+                card.add_text(
+                    f"Vinkki: !sääkuva {location_query} <numero> näyttää vain yhden kulman.",
+                    muted=True,
+                )
 
         # Key facts grid (2 columns keeps it dense but readable)
         card.add_key_value("Lämpötila", f"{weather.temp_c:.1f}°C")
@@ -649,14 +896,39 @@ def build_weather_card(
 
     # No weather data: camera-focused card with helpful note
     title = station_name or location_query
-    subtitle = f"kamera {camera_id}" if camera_id else f"haku: {location_query}"
+    if frames:
+        if is_single_angle:
+            frame = frames[0]
+            if total_angles and total_angles > 1:
+                subtitle = f"kamera {frame.camera_id} (kulma {frame.angle_number}/{total_angles})"
+            else:
+                subtitle = f"kamera {frame.camera_id}"
+        else:
+            if total_angles and total_angles > len(frames):
+                subtitle = f"{len(frames)}/{total_angles} kulmaa"
+            else:
+                subtitle = f"{len(frames)} kuvaa"
+    else:
+        subtitle = f"haku: {location_query}"
     card = Card(
         title=title,
         subtitle=subtitle,
         footer="Digitraffic / Fintraffic • P-iv-Botti",
     ).set_badge("KAMERA", BadgeColor.BLUE)
-    if cam_bytes:
-        card.add_image(cam_bytes, caption=subtitle, max_height=460)
+    if frames:
+        caption = _format_cam_caption(station_name, frames, total_angles, selected_angle)
+        if is_single_angle:
+            card.add_image(frames[0].image_bytes, caption=caption or subtitle, max_height=460)
+        else:
+            card.add_image_grid(
+                [f.image_bytes for f in frames],
+                labels=[str(f.angle_number) for f in frames],
+                caption=caption or subtitle,
+            )
+            card.add_text(
+                f"Vinkki: !sääkuva {location_query} <numero> näyttää vain yhden kulman.",
+                muted=True,
+            )
     card.add_text(
         "Säätiedot eivät ole saatavilla (OPENWEATHER_API_KEY puuttuu tai haku epäonnistui).",
         muted=True,
