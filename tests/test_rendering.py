@@ -183,6 +183,50 @@ class RenderingTests(unittest.TestCase):
         img = self._assert_valid_png(raw_bytes)
         self.assertLessEqual(img.height, 400)
 
+    def _make_test_jpeg(self, width: int = 640, height: int = 480, color: str = "#334155") -> bytes:
+        jpeg_img = Image.new("RGB", (width, height), color=color)
+        buf = BytesIO()
+        jpeg_img.save(buf, format="JPEG")
+        return buf.getvalue()
+
+    def test_image_element_renders_valid_png(self) -> None:
+        """Verify photo element embeds with sharp border and caption."""
+        img_bytes = self._make_test_jpeg()
+        card = (
+            Card(title="Sääkuva", subtitle="Kaisaniemi • C12345", footer="Testi")
+            .set_badge("18.5°C", "yellow")
+            .add_text("Selkeää — 18.5°C", bold=True)
+            .add_image(img_bytes, caption="Kaisaniemi • C12345", max_height=420)
+            .add_key_value("Kosteus", "55%")
+        )
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        self.assertEqual(img.width, 800)
+        self.assertGreater(img.height, 500)
+
+    def test_image_element_tall_photo_respects_max_height(self) -> None:
+        """Tall photos must be constrained to max_height and stay centered."""
+        tall_bytes = self._make_test_jpeg(width=640, height=1000)
+        card = Card(title="Pitkä kuva").add_image(tall_bytes, max_height=300)
+        raw_bytes = render_card(card)
+        img = self._assert_valid_png(raw_bytes)
+        # 300px photo + header/footer chrome should stay compact
+        self.assertLess(img.height, 600)
+
+    def test_image_element_corrupt_bytes_renders_placeholder(self) -> None:
+        """Corrupt image bytes must not crash rendering."""
+        card = Card(title="Rikki").add_image(b"not-an-image", caption="kuva")
+        raw_bytes = render_card(card)
+        self._assert_valid_png(raw_bytes)
+
+    def test_image_element_no_rounded_corners(self) -> None:
+        """Photo rendering must never use rounded rectangles."""
+        img_bytes = self._make_test_jpeg()
+        card = Card(title="Kulmat").add_image(img_bytes, caption="cap")
+        with patch("PIL.ImageDraw.ImageDraw.rounded_rectangle") as mock_rounded:
+            render_card(card)
+            mock_rounded.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

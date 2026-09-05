@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -9,15 +11,31 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.commands.common import command_handler
-from bot.commands.message_utils import reply_in_chunks
+from bot.commands.message_utils import reply_in_chunks, reply_with_card
 from bot.commands.weather_logic import (
-    get_openweather_summary,
-    get_weather_cam_data,
+    build_weather_card,
+    build_weather_error_card,
+    build_weather_fallback_text,
+    get_openweather_details,
+    get_weather_cam_details,
     parse_weather_camera_location,
 )
 from bot.config import BotConfig
 
 COMMAND_USAGE = "!sääkuva <kaupunki>"
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _safe_filename(camera_id: str | None, fallback: str = "saakuva") -> str:
+    if camera_id:
+        cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", camera_id).strip("_")
+        if cleaned:
+            return f"saakuva-{cleaned}.png"
+    safe_query = re.sub(r"[^A-Za-z0-9_-]+", "_", fallback).strip("_")
+    if safe_query:
+        return f"saakuva-{safe_query}.png"
+    return "saakuva.png"
 
 
 def _build_handler(
@@ -41,24 +59,80 @@ def _build_handler(
 
         if update.effective_chat is not None:
             await context.bot.send_chat_action(
-                chat_id=update.effective_chat.id, action=ChatAction.TYPING
+                chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO
             )
 
-        weather_summary = await asyncio.to_thread(
-            get_openweather_summary, location, config.weather
-        )
-        img_data, result = await asyncio.to_thread(
-            get_weather_cam_data, location, config.weather
+        # Fetch camera + weather in parallel (both are blocking urllib calls).
+        cam_result, weather_info = await asyncio.gather(
+            asyncio.to_thread(get_weather_cam_details, location, config.weather),
+            asyncio.to_thread(get_openweather_details, location, config.weather),
         )
 
-        if img_data is None:
-            await reply_in_chunks(update, f"⚠️ {result}", config.max_reply_length)
+        # Both missing: render a compact error card (picture pipeline stays consistent).
+        if cam_result.image_bytes is None and weather_info is None:
+            error_text = cam_result.error or "Sijaintia ei löytynyt"
+            try:
+                error_card = build_weather_error_card(error_text, location)
+                await reply_with_card(
+                    update,
+                    card=error_card,
+                    fallback_text=f"⚠️ {error_text}",
+                    filename=_safe_filename(cam_result.camera_id, location),
+                    max_reply_length=config.max_reply_length,
+                )
+            except Exception:
+                LOGGER.exception("Weather error-card rendering failed")
+                await reply_in_chunks(
+                    update, f"⚠️ {error_text}", config.max_reply_length
+                )
             return
 
-        photo = InputFile(BytesIO(img_data), filename=result)
+        # Build the pleasing informative composite card (photo + weather facts).
+        try:
+            card = build_weather_card(location, cam=cam_result, weather=weather_info)
+            fallback_text = build_weather_fallback_text(
+                location, cam=cam_result, weather=weather_info
+            )
+        except Exception:
+            LOGGER.exception("Weather card building failed")
+            # Graceful degradation to legacy behaviour: raw photo + error note.
+            if cam_result.image_bytes is not None:
+                photo = InputFile(
+                    BytesIO(cam_result.image_bytes),
+                    filename=f"{cam_result.camera_id or 'saakuva'}.jpg",
+                )
+                await message.reply_photo(photo=photo)
+            else:
+                await reply_in_chunks(
+                    update,
+                    f"⚠️ {cam_result.error or 'Sääkuvan haku epäonnistui'}",
+                    config.max_reply_length,
+                )
+            return
 
-        # Send the photo with the weather summary as the caption in a single message
-        await message.reply_photo(photo=photo, caption=weather_summary)
+        try:
+            await reply_with_card(
+                update,
+                card=card,
+                fallback_text=fallback_text,
+                filename=_safe_filename(cam_result.camera_id, location),
+                max_reply_length=config.max_reply_length,
+            )
+        except Exception:
+            LOGGER.exception("Weather card sending failed, falling back to raw photo")
+            # Last-resort fallback: raw camera photo so the user still gets the image.
+            if cam_result.image_bytes is not None:
+                try:
+                    photo = InputFile(
+                        BytesIO(cam_result.image_bytes),
+                        filename=f"{cam_result.camera_id or 'saakuva'}.jpg",
+                    )
+                    await message.reply_photo(photo=photo, caption=fallback_text)
+                except Exception:
+                    LOGGER.exception("Weather raw-photo fallback also failed")
+                    await reply_in_chunks(update, fallback_text, config.max_reply_length)
+            else:
+                await reply_in_chunks(update, fallback_text, config.max_reply_length)
 
     return handle_weather
 

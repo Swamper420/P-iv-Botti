@@ -129,6 +129,13 @@ class CodeBlockElement(CardElement):
 
 
 @dataclass
+class ImageElement(CardElement):
+    image_bytes: bytes = b""
+    caption: str | None = None
+    max_height: int | None = 420
+
+
+@dataclass
 class Card:
     title: str
     subtitle: str | None = None
@@ -265,6 +272,21 @@ class Card:
                 language=language,
                 max_lines=max_lines,
                 overflow=overflow,
+            )
+        )
+        return self
+
+    def add_image(
+        self,
+        image_bytes: bytes,
+        caption: str | None = None,
+        max_height: int | None = 420,
+    ) -> Card:
+        self.elements.append(
+            ImageElement(
+                image_bytes=image_bytes,
+                caption=caption,
+                max_height=max_height,
             )
         )
         return self

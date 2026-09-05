@@ -14,6 +14,7 @@ from bot.rendering.models import (
     CardElement,
     CodeBlockElement,
     DividerElement,
+    ImageElement,
     KeyValuesElement,
     ProgressBarElement,
     TableElement,
@@ -254,6 +255,43 @@ def _draw_sharp_badge(
     return badge_w, badge_h
 
 
+def _probe_image_size(image_bytes: bytes) -> tuple[int, int] | None:
+    """Return (width, height) of image bytes without fully loading, or None on failure."""
+    if not image_bytes:
+        return None
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            w, h = img.size
+            if w <= 0 or h <= 0:
+                return None
+            return w, h
+    except Exception:
+        return None
+
+
+def _compute_image_display_size(
+    orig_w: int,
+    orig_h: int,
+    content_width: int,
+    max_height: int | None,
+) -> tuple[int, int]:
+    """Compute aspect-fit display size for content width with optional max height.
+
+    Fits to full content width unless that would exceed max_height, in which
+    case scales down to max_height and lets width shrink (centered on draw).
+    All corners stay sharp (no rounding applied anywhere).
+    """
+    if orig_w <= 0 or orig_h <= 0 or content_width <= 0:
+        return content_width, 200
+    scaled_h = int(round(orig_h * (content_width / orig_w)))
+    if max_height is not None and max_height > 0 and scaled_h > max_height:
+        disp_h = max_height
+        disp_w = max(1, int(round(orig_w * (disp_h / orig_h))))
+        disp_w = min(disp_w, content_width)
+        return disp_w, disp_h
+    return content_width, max(1, scaled_h)
+
+
 class CardRenderer:
     def __init__(self, card: Card, theme: Theme = DARK_THEME) -> None:
         self.card = card
@@ -285,7 +323,7 @@ class CardRenderer:
         # Pass 2: Draw onto target canvas
         img = Image.new("RGB", (self.card_width, total_height), color=self.theme.canvas_bg)
         draw = ImageDraw.Draw(img)
-        self._draw_all(draw, total_height)
+        self._draw_all(draw, img, total_height)
 
         output = BytesIO()
         img.save(output, format="PNG", optimize=True)
@@ -370,9 +408,38 @@ class CardRenderer:
             line_h = _get_text_height(draw, "Ag", self.font_mono) + 3
             return (total_lines_count * line_h) + 14
 
+        elif isinstance(element, ImageElement):
+            return self._measure_image_element(draw, element)
+
         return 18
 
-    def _draw_all(self, draw: ImageDraw.ImageDraw, total_height: int) -> None:
+    def _measure_image_element(
+        self, draw: ImageDraw.ImageDraw, element: ImageElement
+    ) -> int:
+        size = _probe_image_size(element.image_bytes)
+        if size is None:
+            base_h = 48
+        else:
+            _disp_w, disp_h = _compute_image_display_size(
+                size[0], size[1], self.content_width, element.max_height
+            )
+            base_h = disp_h
+        total = base_h
+        if element.caption:
+            cap_lines = _wrap_text(
+                draw, element.caption, self.font_small, self.content_width
+            )
+            if cap_lines:
+                cap_h = sum(
+                    _get_text_height(draw, line, self.font_small) + 2
+                    for line in cap_lines
+                )
+                total += 6 + cap_h
+        return total
+
+    def _draw_all(
+        self, draw: ImageDraw.ImageDraw, img: Image.Image, total_height: int
+    ) -> None:
         # Draw outer card box with sharp corners (NO rounded corners)
         draw.rectangle(
             [(0, 0), (self.card_width - 1, total_height - 1)],
@@ -420,7 +487,7 @@ class CardRenderer:
 
         # Draw Elements
         for el in self.card.elements:
-            y = self._draw_element(draw, el, x, y)
+            y = self._draw_element(draw, img, el, x, y)
             y += self.theme.element_spacing
 
         # Draw Footer
@@ -431,7 +498,14 @@ class CardRenderer:
                 draw.text((x, y), line, fill=self.theme.text_muted, font=self.font_small)
                 y += _get_text_height(draw, line, self.font_small) + 2
 
-    def _draw_element(self, draw: ImageDraw.ImageDraw, element: CardElement, x: int, y: int) -> int:
+    def _draw_element(
+        self,
+        draw: ImageDraw.ImageDraw,
+        img: Image.Image,
+        element: CardElement,
+        x: int,
+        y: int,
+    ) -> int:
         if isinstance(element, TextElement):
             font = self.font_mono if element.is_code else (self.font_body_bold if element.bold else self.font_body)
             color = element.color or (self.theme.text_muted if element.muted else self.theme.text_primary)
@@ -641,6 +715,93 @@ class CardRenderer:
 
             return y + block_h
 
+        elif isinstance(element, ImageElement):
+            return self._draw_image_element(draw, img, element, x, y)
+
+        return y
+
+    def _draw_image_element(
+        self,
+        draw: ImageDraw.ImageDraw,
+        img: Image.Image,
+        element: ImageElement,
+        x: int,
+        y: int,
+    ) -> int:
+        """Draw photo with sharp 1px border and optional centered caption."""
+        size = _probe_image_size(element.image_bytes)
+        if size is None:
+            box_h = 48
+            draw.rectangle(
+                [(x, y), (x + self.content_width, y + box_h)],
+                fill=self.theme.panel_bg,
+                outline=self.theme.border_color,
+                width=1,
+            )
+            draw.text(
+                (x + 8, y + 14),
+                "Kuvaa ei voitu näyttää",
+                fill=self.theme.text_muted,
+                font=self.font_small,
+            )
+            y += box_h
+        else:
+            disp_w, disp_h = _compute_image_display_size(
+                size[0], size[1], self.content_width, element.max_height
+            )
+            x_offset = x + (self.content_width - disp_w) // 2 if disp_w < self.content_width else x
+            try:
+                with Image.open(BytesIO(element.image_bytes)) as pil_img:
+                    try:
+                        from PIL import ImageOps
+
+                        pil_img = ImageOps.exif_transpose(pil_img)
+                    except Exception:
+                        pass
+                    if pil_img.mode in ("RGBA", "LA", "PA"):
+                        canvas = Image.new("RGB", pil_img.size, self.theme.card_bg)
+                        try:
+                            alpha = pil_img.split()[-1]
+                            canvas.paste(pil_img.convert("RGB"), mask=alpha)
+                            pil_img = canvas
+                        except Exception:
+                            pil_img = pil_img.convert("RGB")
+                    else:
+                        pil_img = pil_img.convert("RGB")
+                    if (pil_img.width, pil_img.height) != (disp_w, disp_h):
+                        pil_img = pil_img.resize((disp_w, disp_h), Image.LANCZOS)
+                    img.paste(pil_img, (x_offset, y))
+            except Exception:
+                draw.rectangle(
+                    [(x, y), (x + self.content_width, y + 48)],
+                    fill=self.theme.panel_bg,
+                    outline=self.theme.border_color,
+                    width=1,
+                )
+                draw.text(
+                    (x + 8, y + 14),
+                    "Kuvaa ei voitu näyttää",
+                    fill=self.theme.text_muted,
+                    font=self.font_small,
+                )
+                y += 48
+            else:
+                # Sharp border around photo (NO rounded corners)
+                draw.rectangle(
+                    [(x_offset, y), (x_offset + disp_w, y + disp_h)],
+                    outline=self.theme.border_color,
+                    width=1,
+                )
+                y += disp_h
+
+        if element.caption:
+            cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+            y += 6
+            for line in cap_lines:
+                lw = _get_text_width(draw, line, self.font_small)
+                tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
+                draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
+                y += _get_text_height(draw, line, self.font_small) + 2
         return y
 
 

@@ -40,7 +40,7 @@ When extending this project:
   - `message_utils.py`: `split_message(...)`, `reply_in_chunks(...)`, `reply_with_image(...)`, and `reply_with_card(...)` (with automatic fallback to text on upload error)
 - Picture rendering system in `bot/rendering/`:
   - `engine.py`: PIL-based card renderer (`render_card`, `render_text_card`, `render_table_card`) with dynamic height sizing and system font resolution
-  - `models.py`: `Card`, `Badge`, `BadgeColor`, `Theme`, `DARK_THEME`, and element models (`TextElement`, `KeyValuesElement`, `TableElement`, `DividerElement`, `ProgressBarElement`, `CodeBlockElement`)
+  - `models.py`: `Card`, `Badge`, `BadgeColor`, `Theme`, `DARK_THEME`, and element models (`TextElement`, `KeyValuesElement`, `TableElement`, `DividerElement`, `ProgressBarElement`, `CodeBlockElement`, `ImageElement` with `Card.add_image(...)` for aspect-fit photos with sharp borders)
 - Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
 - Background tasks are modularized in `bot/tasks/`:
   - `cs2_rss.py`: `Cs2RssNotifier` for background RSS polling
