@@ -5,13 +5,20 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from bot.commands.telkkari_logic import (
+    build_channel_day_card,
+    build_invalid_channel_arg_card,
+    build_next_hour_card,
+    build_unknown_channel_card,
     clear_epg_cache,
     fetch_epg_data,
     get_channel_day_schedule,
+    get_channel_day_schedule_card,
     get_next_hour_schedule,
+    get_next_hour_schedule_card,
     parse_xmltv_time,
 )
 from bot.config import TelkkariConfig
+from bot.rendering import render_card
 
 SAMPLE_XMLTV = """<?xml version="1.0" encoding="UTF-8"?>
 <tv>
@@ -123,6 +130,97 @@ class TelkkariLogicTests(unittest.TestCase):
     def test_fetch_epg_data_failure_handled(self, mock_urlopen: MagicMock) -> None:
         res = get_channel_day_schedule(1, self.config)
         self.assertIn("TV-ohjelmatietojen haku epäonnistui", res)
+
+    def test_channel_day_card_matches_fallback_and_renders(self) -> None:
+        root = ET.fromstring(SAMPLE_XMLTV)
+        now = datetime(2026, 8, 2, 13, 15, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+        fallback = get_channel_day_schedule(1, self.config, now=now, xml_root=root)
+        card_fallback, card = get_channel_day_schedule_card(
+            1, self.config, now=now, xml_root=root
+        )
+        self.assertEqual(fallback, card_fallback)
+        self.assertEqual(card.title, "YLE TV1")
+        self.assertEqual(card.badge.text, "TÄNÄÄN")
+        png = render_card(card)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_channel_day_card_unknown_and_empty_render(self) -> None:
+        root = ET.fromstring(SAMPLE_XMLTV)
+        now = datetime(2026, 8, 2, 13, 15, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+        fallback, card = get_channel_day_schedule_card(
+            99, self.config, now=now, xml_root=root
+        )
+        self.assertIn("Tuntematon kanavanumero", fallback)
+        self.assertEqual(card.title, "Tuntematon kanava")
+        self.assertTrue(render_card(card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+        fallback_empty, empty_card = get_channel_day_schedule_card(
+            3, self.config, now=now, xml_root=root
+        )
+        self.assertIn("ei löytynyt", fallback_empty)
+        self.assertEqual(empty_card.badge.text, "TYHJÄ")
+        self.assertTrue(render_card(empty_card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_next_hour_card_matches_fallback_and_renders(self) -> None:
+        root = ET.fromstring(SAMPLE_XMLTV)
+        now = datetime(2026, 8, 2, 13, 15, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+        fallback = get_next_hour_schedule(self.config, now=now, xml_root=root)
+        card_fallback, card = get_next_hour_schedule_card(
+            self.config, now=now, xml_root=root
+        )
+        self.assertEqual(fallback, card_fallback)
+        self.assertEqual(card.title, "TV-ohjelmat")
+        self.assertIn("OHJELMAA", card.badge.text)
+        png = render_card(card)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_next_hour_card_empty_renders(self) -> None:
+        root = ET.fromstring(SAMPLE_XMLTV)
+        now = datetime(2026, 8, 2, 3, 0, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+        fallback, card = get_next_hour_schedule_card(
+            self.config, now=now, xml_root=root
+        )
+        self.assertIn("ei löytynyt ohjelmatietoja", fallback)
+        self.assertEqual(card.badge.text, "TYHJÄ")
+        self.assertTrue(render_card(card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_card_fetch_failure_renders_error(self) -> None:
+        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+            fallback, card = get_channel_day_schedule_card(1, self.config)
+            self.assertIn("haku epäonnistui", fallback)
+            self.assertEqual(card.badge.text, "VIRHE")
+            self.assertTrue(render_card(card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+            fallback_next, card_next = get_next_hour_schedule_card(self.config)
+            self.assertIn("haku epäonnistui", fallback_next)
+            self.assertEqual(card_next.badge.text, "VIRHE")
+            self.assertTrue(render_card(card_next).startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_pure_builders_render(self) -> None:
+        now = datetime(2026, 8, 2, 13, 15, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+        start = datetime(2026, 8, 2, 13, 0, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+        stop = datetime(2026, 8, 2, 14, 0, 0, tzinfo=ZoneInfo("Europe/Helsinki"))
+
+        day_card = build_channel_day_card("YLE TV1", [(start, stop, "Uutiset")], now=now)
+        self.assertTrue(render_card(day_card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+        hour_card = build_next_hour_card(
+            [("YLE TV1", start, stop, "Uutiset")], now=now, next_hour_end=stop
+        )
+        self.assertTrue(render_card(hour_card).startswith(b"\x89PNG\r\n\x1a\n"))
+
+        self.assertTrue(
+            render_card(build_unknown_channel_card(99)).startswith(b"\x89PNG\r\n\x1a\n")
+        )
+        self.assertTrue(
+            render_card(build_invalid_channel_arg_card("abc")).startswith(
+                b"\x89PNG\r\n\x1a\n"
+            )
+        )
 
 
 if __name__ == "__main__":
