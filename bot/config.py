@@ -157,6 +157,31 @@ class TiivistaConfig:
 
 
 @dataclass(frozen=True)
+class MemeConfig:
+    max_image_bytes: int = 10_000_000
+    yolo_model: str = "yolo26n.pt"
+    yolo_confidence_threshold: float = 0.25
+    ocr_enabled: bool = True
+    ocr_language: str = "fin+eng"
+    ocr_tesseract_cmd: str = "tesseract"
+    ocr_tessdata_dir: str = ""
+    ocr_timeout_seconds: int = 30
+    caption_num_predict: int = 120
+    system_prompt: str = (
+        "Keksi kuvaan hauska suomenkielinen meemiteksti. "
+        "Saat kuvahavainnot, kuvasta luetun tekstin ja käyttäjän vihjeen. "
+        "Vastaa täsmälleen kahdella rivillä muodossa:\n"
+        "YLÄ: <lyhyt yläteksti, enintään 8 sanaa>\n"
+        "ALA: <lyhyt punchline, enintään 8 sanaa>\n"
+        "Ei muuta tekstiä, ei lainausmerkkejä."
+    )
+    max_top_chars: int = 60
+    max_bottom_chars: int = 60
+    output_max_width: int = 1080
+    jpeg_quality: int = 90
+
+
+@dataclass(frozen=True)
 class CraftyConfig:
     base_url: str = "https://localhost:8443"
     api_token: str = ""
@@ -211,6 +236,7 @@ class BotConfig:
     stt: SttConfig = SttConfig()
     reminder: ReminderConfig = ReminderConfig()
     tiivista: TiivistaConfig = TiivistaConfig()
+    meme: MemeConfig = MemeConfig()
     crafty: CraftyConfig = CraftyConfig()
     mumble: MumbleConfig = MumbleConfig()
     rendering: RenderingConfig = RenderingConfig()
@@ -702,6 +728,84 @@ class BotConfig:
             ocr_timeout_seconds=tiivista_ocr_timeout_seconds,
         )
 
+        meme_max_image_bytes = int(
+            os.getenv("MEME_MAX_IMAGE_BYTES", "10000000")
+        )
+        if meme_max_image_bytes < 1:
+            raise ValueError("MEME_MAX_IMAGE_BYTES must be >= 1")
+
+        meme_yolo_confidence_threshold = float(
+            os.getenv("MEME_YOLO_CONFIDENCE_THRESHOLD", "0.25")
+        )
+        if not 0 <= meme_yolo_confidence_threshold <= 1:
+            raise ValueError(
+                "MEME_YOLO_CONFIDENCE_THRESHOLD must be between 0 and 1"
+            )
+
+        meme_ocr_enabled = (
+            os.getenv("MEME_OCR_ENABLED", "true").strip().lower() == "true"
+        )
+        meme_ocr_language = os.getenv(
+            "MEME_OCR_LANGUAGE", "fin+eng"
+        ).strip()
+        meme_ocr_tesseract_cmd = os.getenv(
+            "MEME_OCR_TESSERACT_CMD", "tesseract"
+        ).strip()
+        meme_ocr_tessdata_dir = os.getenv(
+            "MEME_OCR_TESSDATA_DIR", ""
+        ).strip()
+        meme_ocr_timeout_seconds = int(
+            os.getenv("MEME_OCR_TIMEOUT_SECONDS", "30")
+        )
+        if meme_ocr_timeout_seconds < 1:
+            raise ValueError("MEME_OCR_TIMEOUT_SECONDS must be >= 1")
+
+        meme_caption_num_predict = int(
+            os.getenv("MEME_CAPTION_NUM_PREDICT", "120")
+        )
+        if meme_caption_num_predict < 1:
+            raise ValueError("MEME_CAPTION_NUM_PREDICT must be >= 1")
+
+        default_meme_prompt = MemeConfig.system_prompt
+        meme_system_prompt = os.getenv(
+            "MEME_SYSTEM_PROMPT", default_meme_prompt
+        ).strip()
+        if not meme_system_prompt:
+            raise ValueError("MEME_SYSTEM_PROMPT must not be empty")
+
+        meme_max_top_chars = int(os.getenv("MEME_MAX_TOP_CHARS", "60"))
+        if meme_max_top_chars < 1:
+            raise ValueError("MEME_MAX_TOP_CHARS must be >= 1")
+
+        meme_max_bottom_chars = int(os.getenv("MEME_MAX_BOTTOM_CHARS", "60"))
+        if meme_max_bottom_chars < 1:
+            raise ValueError("MEME_MAX_BOTTOM_CHARS must be >= 1")
+
+        meme_output_max_width = int(os.getenv("MEME_OUTPUT_MAX_WIDTH", "1080"))
+        if not 100 <= meme_output_max_width <= 4000:
+            raise ValueError("MEME_OUTPUT_MAX_WIDTH must be between 100 and 4000")
+
+        meme_jpeg_quality = int(os.getenv("MEME_JPEG_QUALITY", "90"))
+        if not 1 <= meme_jpeg_quality <= 100:
+            raise ValueError("MEME_JPEG_QUALITY must be between 1 and 100")
+
+        meme_config = MemeConfig(
+            max_image_bytes=meme_max_image_bytes,
+            yolo_model=os.getenv("MEME_YOLO_MODEL", "yolo26n.pt").strip(),
+            yolo_confidence_threshold=meme_yolo_confidence_threshold,
+            ocr_enabled=meme_ocr_enabled,
+            ocr_language=meme_ocr_language,
+            ocr_tesseract_cmd=meme_ocr_tesseract_cmd,
+            ocr_tessdata_dir=meme_ocr_tessdata_dir,
+            ocr_timeout_seconds=meme_ocr_timeout_seconds,
+            caption_num_predict=meme_caption_num_predict,
+            system_prompt=meme_system_prompt,
+            max_top_chars=meme_max_top_chars,
+            max_bottom_chars=meme_max_bottom_chars,
+            output_max_width=meme_output_max_width,
+            jpeg_quality=meme_jpeg_quality,
+        )
+
         crafty_timeout_seconds = int(os.getenv("CRAFTY_TIMEOUT_SECONDS", "10"))
         if crafty_timeout_seconds < 1:
             raise ValueError("CRAFTY_TIMEOUT_SECONDS must be >= 1")
@@ -780,6 +884,7 @@ class BotConfig:
             stt=stt_config,
             reminder=reminder_config,
             tiivista=tiivista_config,
+            meme=meme_config,
             crafty=crafty_config,
             mumble=mumble_config,
             rendering=rendering_config,

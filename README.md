@@ -15,6 +15,7 @@ Async and modular Telegram bot skeleton.
 - **`!help`**: Auto-discovers and lists available bot commands.
 - **`!hoi` / `!hoijaa`**: Manages and pings mention lists for chat groups (`!hoi <lista>`, `!hoi @käyttäjä <lista>`, `!hoijaa @käyttäjä <lista>`).
 - **`!naama` / `!naamatarra`**: Segments the person from a photo (or replied photo), applies a random background image, and overlays random accessories from `storage/naama/`.
+- **`!meme [vihje]`**: Photo-only meme generator. Send a photo with caption `!meme [vihje]` or reply to a photo with `!meme [vihje]`. Recognizes photo content locally (YOLO + Tesseract OCR, same stack as `!tiivistä`), asks local Ollama for a funny Finnish top/bottom caption, and renders it in classic meme style over the original photo.
 - **`!sääkuva <kaupunki>`**: Fetches current weather information from OpenWeather and weather camera images from Digitraffic for the requested location.
 - **`!twitch`**: Shows current status and live links for configured Twitch channels.
 - **CS2 RSS Notifier**: Background task polling Steam's CS2 RSS feed and forwarding new updates to active bot chats. `STEAM_CS2_RSS_URL`, `STEAM_RSS_POLL_INTERVAL_SECONDS`, and `STEAM_RSS_REQUEST_TIMEOUT_SECONDS` are configurable through `.env`.
