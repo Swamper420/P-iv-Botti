@@ -100,6 +100,46 @@ class ParseMemeCaptionTests(unittest.TestCase):
         self.assertEqual(parse_meme_caption(""), ("", ""))
         self.assertEqual(parse_meme_caption("   \n  "), ("", ""))
 
+    def test_single_line_with_both_labels_split(self) -> None:
+        # Regression: model emits both labels on one line; the embedded
+        # second label must not leak into the top field.
+        self.assertEqual(
+            parse_meme_caption(
+                "YLÄ: TYÖNHAKU PÄÄLLÄ? / ALA: HYVÄ, ETTÄ MUISTAT HAKEMUKSEN!"
+            ),
+            ("TYÖNHAKU PÄÄLLÄ?", "HYVÄ, ETTÄ MUISTAT HAKEMUKSEN!"),
+        )
+
+    def test_single_line_pipe_separated_labels(self) -> None:
+        self.assertEqual(
+            parse_meme_caption("TOP: foo | BOTTOM: bar"), ("foo", "bar")
+        )
+
+    def test_only_bottom_label_uses_preamble_as_top(self) -> None:
+        self.assertEqual(
+            parse_meme_caption("TYÖNHAKU PÄÄLLÄ? / ALA: HAUSKA!"),
+            ("TYÖNHAKU PÄÄLLÄ?", "HAUSKA!"),
+        )
+
+    def test_label_inside_word_not_matched(self) -> None:
+        self.assertEqual(
+            parse_meme_caption("Salainen: juttu"), ("Salainen: juttu", "")
+        )
+        self.assertEqual(
+            parse_meme_caption("Kissa on pöydän alla"),
+            ("Kissa on pöydän alla", ""),
+        )
+
+    def test_reported_case_renders_both_fields(self) -> None:
+        top, bottom = parse_meme_caption(
+            "YLÄ: TYÖNHAKU PÄÄLLÄ? / ALA: HYVÄ, ETTÄ MUISTAT HAKEMUKSEN!"
+        )
+        top = sanitize_caption_line(top, 60)
+        bottom = sanitize_caption_line(bottom, 60)
+        self.assertTrue(top)
+        self.assertTrue(bottom)
+        self.assertNotIn("ALA:", top)
+
 
 class SanitizeCaptionLineTests(unittest.TestCase):
     def test_uppercase_and_collapse(self) -> None:

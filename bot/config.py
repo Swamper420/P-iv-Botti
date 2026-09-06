@@ -170,9 +170,10 @@ class MemeConfig:
     system_prompt: str = (
         "Keksi kuvaan hauska suomenkielinen meemiteksti. "
         "Saat kuvahavainnot, kuvasta luetun tekstin ja käyttäjän vihjeen. "
-        "Vastaa täsmälleen kahdella rivillä muodossa:\n"
-        "YLÄ: <lyhyt yläteksti, enintään 8 sanaa>\n"
-        "ALA: <lyhyt punchline, enintään 8 sanaa>\n"
+        "Vastaa täsmälleen kahdella eri rivillä: ensimmäisellä rivillä "
+        "YLÄ: <lyhyt yläteksti, enintään 8 sanaa> ja toisella rivillä "
+        "ALA: <lyhyt punchline, enintään 8 sanaa>. "
+        "Älä yhdistä molempia samalle riville. "
         "Ei muuta tekstiä, ei lainausmerkkejä."
     )
     max_top_chars: int = 60

@@ -69,8 +69,9 @@ def build_meme_prompt(
         return ""
 
     sections.append(
-        "Keksi hauska meemiteksti. Vastaa täsmälleen kahdella rivillä: "
-        "YLÄ: ... / ALA: ..."
+        "Keksi hauska meemiteksti. Vastaa täsmälleen kahdella eri rivillä: "
+        "ensimmäisellä rivillä YLÄ: ... ja toisella rivillä ALA: .... "
+        "Älä yhdistä molempia samalle riville."
     )
     return "\n".join(sections)
 
@@ -100,50 +101,79 @@ def sanitize_caption_line(line: str, max_chars: int) -> str:
     return _truncate(cleaned.upper(), max_chars)
 
 
+_LABEL_FINDER = re.compile(
+    r"\b(YLÄ|YLA|TOP|UPPER|ALA|BOTTOM|LOWER)\b\s*[:\-–—|/]",
+    re.IGNORECASE,
+)
+
+
+def _strip_joiner_punctuation(value: str) -> str:
+    """Strip leftover "/"/"|" joiners around a split caption segment."""
+    value = re.sub(r"^\s*[/|]+\s*", "", value)
+    value = re.sub(r"\s*[/|]+\s*$", "", value)
+    return value
+
+
+def _split_labeled_caption(raw: str) -> tuple[str | None, str | None]:
+    """Split raw caption at YLÄ:/ALA: (or TOP:/BOTTOM:) label positions.
+
+    Works across line breaks, so single-line model outputs like
+    "YLÄ: foo / ALA: bar" parse into ("foo", "bar") instead of leaving
+    the embedded second label inside the top field.
+    """
+    matches = list(_LABEL_FINDER.finditer(raw))
+    if not matches:
+        return None, None
+
+    top_parts: list[str] = []
+    bottom_parts: list[str] = []
+    for index, match in enumerate(matches):
+        label = match.group(1).upper()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+        value = _clean_line(_strip_joiner_punctuation(raw[match.end():end]))
+        if not value:
+            continue
+        if label in _TOP_LABELS:
+            top_parts.append(value)
+        else:
+            bottom_parts.append(value)
+
+    top = " ".join(top_parts) if top_parts else None
+    bottom = " ".join(bottom_parts) if bottom_parts else None
+
+    if top is None and bottom is not None:
+        # Only a bottom label was found (e.g. "Some setup / ALA: punchline"):
+        # treat the text before the first label as the top field.
+        preamble = _clean_line(_strip_joiner_punctuation(raw[: matches[0].start()]))
+        if preamble:
+            top = preamble
+
+    return top, bottom
+
+
 def parse_meme_caption(raw: str) -> tuple[str, str]:
     """Parse raw LLM output into (top_text, bottom_text).
 
-    Understands labeled ("YLÄ: ...", "ALA: ...", "TOP: ...", "BOTTOM: ..."),
-    multi-line, and "top | bottom" formats. Returns raw (unsanitized) lines.
+    Understands labeled ("YLÄ: ...", "ALA: ...", "TOP: ...", "BOTTOM: ...")
+    output even on a single line, multi-line, and "top | bottom" formats.
+    Returns raw (unsanitized) lines.
     """
     if not raw or not raw.strip():
         return "", ""
 
     lines = [_clean_line(line) for line in raw.strip().splitlines()]
     lines = [line for line in lines if line]
+    if not lines:
+        return "", ""
 
-    label_pattern = re.compile(
-        r"^\s*(YLÄ|YLA|TOP|UPPER|ALA|BOTTOM|LOWER)\s*[:\-–—|]\s*(.+)$",
-        re.IGNORECASE,
-    )
-    top: str | None = None
-    bottom: str | None = None
-    unlabeled: list[str] = []
-    for line in lines:
-        label_match = label_pattern.match(line)
-        if not label_match:
-            unlabeled.append(line)
-            continue
-        label = label_match.group(1).upper()
-        value = _clean_line(label_match.group(2))
-        if label in _TOP_LABELS and top is None:
-            top = value
-        elif label in _BOTTOM_LABELS and bottom is None:
-            bottom = value
-        else:
-            unlabeled.append(value)
-
+    top, bottom = _split_labeled_caption("\n".join(lines))
     if top is not None or bottom is not None:
-        if top is None:
-            top = " ".join(unlabeled).strip()
-        if bottom is None:
-            bottom = ""
-        return top.strip(), bottom.strip()
+        return (top or "").strip(), (bottom or "").strip()
 
-    if len(unlabeled) >= 2:
-        return unlabeled[0], " ".join(unlabeled[1:]).strip()
+    if len(lines) >= 2:
+        return lines[0], " ".join(lines[1:]).strip()
 
-    single = unlabeled[0] if unlabeled else ""
+    single = lines[0] if lines else ""
     if "|" in single:
         first, rest = single.split("|", 1)
         return first.strip(), rest.strip()
