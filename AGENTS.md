@@ -47,7 +47,7 @@ When extending this project:
   - `cs2_rss.py`: `Cs2RssNotifier` for background RSS polling
   - `mumble.py`: `MumbleTask` for Mumble server presence and stats tracking
   - `reminders.py`: `ReminderNotifier` for scheduled reminder delivery
-  - `twitch.py`: `TwitchEventSubNotifier` for Twitch EventSub WebSockets live notifications
+  - `twitch.py`: `TwitchEventSubNotifier` for Twitch API polling (60s) live notifications
   - Auto-discovered and registered via `bot/tasks/__init__.py` (`register_tasks`)
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).

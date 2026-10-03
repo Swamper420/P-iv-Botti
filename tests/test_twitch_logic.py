@@ -1,7 +1,7 @@
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from bot.commands.twitch_logic import fetch_twitch_status_reply, parse_twitch_command
 from bot.config import BotConfig, TwitchConfig
@@ -129,13 +129,17 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(user_ids, {"shroud": "1001", "tarik": "1002"})
 
-    async def test_handle_stream_online_event_triggers_callback(self) -> None:
+    async def test_polling_detects_online(self) -> None:
         cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("shroud",))
         mock_client = MagicMock(spec=TwitchClient)
+        mock_client.get_user_ids.return_value = {"shroud": "1001"}
         mock_client.get_stream_info.return_value = {
             "title": "Pro CS2",
             "game_name": "Counter-Strike 2",
+            "user_name": "shroud",
+            "viewer_count": 100,
             "thumbnail_url": "https://example.com/{width}x{height}.jpg",
+            "started_at": "2026-07-27T17:00:00Z",
         }
 
         notifications: list[TwitchStreamNotification] = []
@@ -145,14 +149,12 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
 
         notifier = TwitchEventSubNotifier(config=cfg, on_stream_online=callback, client=mock_client)
 
-        event_payload = {
-            "broadcaster_user_id": "1001",
-            "broadcaster_user_login": "shroud",
-            "broadcaster_user_name": "shroud",
-            "started_at": "2026-07-27T17:00:00Z",
-        }
-
-        await notifier._handle_stream_online_event(event_payload)
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError()):
+            try:
+                notifier._running = True
+                await notifier._run_polling_loop()
+            except asyncio.CancelledError:
+                pass
 
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].broadcaster_login, "shroud")
@@ -180,76 +182,6 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("CS2 Major", reply)
         self.assertIn("tarik", reply)
         self.assertIn("Offline", reply)
-
-    def test_subscribe_eventsub_websocket_without_user_token(self) -> None:
-        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="", channels=("shroud",))
-        client = TwitchClient(cfg)
-        ok = client.subscribe_eventsub_websocket("session123", "1001")
-        self.assertFalse(ok)
-
-    @patch("urllib.request.urlopen")
-    def test_subscribe_eventsub_websocket_invalid_auth_400(self, mock_urlopen: MagicMock) -> None:
-        import io
-        import urllib.error
-        err_resp = urllib.error.HTTPError(
-            url="http://example.com",
-            code=400,
-            msg="Bad Request",
-            hdrs={},
-            fp=io.BytesIO(b'{"error":"Bad Request","status":400,"message":"invalid transport and auth combination"}'),
-        )
-        mock_urlopen.side_effect = err_resp
-
-        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="user_tok", channels=("shroud",))
-        client = TwitchClient(cfg)
-        ok = client.subscribe_eventsub_websocket("session123", "1001")
-        self.assertFalse(ok)
-
-    async def test_notifier_defaults_to_polling_without_user_token(self) -> None:
-        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="", channels=("shroud",))
-        mock_client = MagicMock(spec=TwitchClient)
-
-        async def callback(_: TwitchStreamNotification) -> None:
-            pass
-
-        notifier = TwitchEventSubNotifier(config=cfg, on_stream_online=callback, client=mock_client)
-
-    async def test_notifier_calls_on_token_expired_when_user_token_fails(self) -> None:
-        cfg = TwitchConfig(client_id="cid", client_secret="csecret", user_access_token="invalid_tok", channels=("shroud",))
-        mock_client = MagicMock(spec=TwitchClient)
-        mock_client.subscribe_eventsub_websocket.return_value = False
-
-        token_errors: list[str] = []
-
-        async def callback(_: TwitchStreamNotification) -> None:
-            pass
-
-        async def on_token_expired(reason: str) -> None:
-            token_errors.append(reason)
-
-        notifier = TwitchEventSubNotifier(
-            config=cfg,
-            on_stream_online=callback,
-            client=mock_client,
-            on_token_expired=on_token_expired,
-        )
-        notifier._user_map = {"1001": "shroud"}
-
-        mock_ws = AsyncMock()
-        mock_ws.__aiter__.return_value = [
-            json.dumps({
-                "metadata": {"message_type": "session_welcome"},
-                "payload": {"session": {"id": "sess123"}},
-            })
-        ]
-
-        with patch("websockets.connect") as mock_connect:
-            mock_connect.return_value.__aenter__.return_value = mock_ws
-            await notifier._run_websocket_session("wss://example.com")
-
-        self.assertTrue(notifier._use_polling_fallback)
-        self.assertEqual(len(token_errors), 1)
-        self.assertIn("TWITCH_USER_ACCESS_TOKEN", token_errors[0])
 
     async def test_offline_detection_triggers_summary_callback(self) -> None:
         cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("shroud",))
