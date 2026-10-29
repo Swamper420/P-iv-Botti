@@ -93,6 +93,9 @@ def _build_handler(
             )
 
         source_text: str = ""
+        summary_from_vision: str = ""
+        image_description: str = ""
+        ocr_text: str = ""
         if target_photo:
             try:
                 tg_file = await context.bot.get_file(target_photo.file_id)
@@ -111,70 +114,95 @@ def _build_handler(
                 )
                 return
 
-            # Primary perception: external Eyes VLM description.
-            # Local YOLO + OCR kept only as fallback when Eyes fails.
-            image_description = await describe_image_with_eyes(
+            # Primary: Eyes VLM summarizes the image directly.
+            # Fallback: Eyes description (or local YOLO + OCR) + Ollama summary.
+            direct_prompt = config.tiivista.direct_prompt
+            if raw_text:
+                direct_prompt += f"\nLisätiedot: {raw_text[:500]}"
+            direct_summary = await describe_image_with_eyes(
                 photo_bytes,
-                config.tiivista.vision_prompt,
+                direct_prompt,
                 base_url=config.eyes.base_url,
                 model=config.eyes.model,
-                max_tokens=config.tiivista.vision_max_tokens,
+                max_tokens=config.tiivista.summary_num_predict,
                 timeout_seconds=config.eyes.timeout_seconds,
                 max_dimension=config.eyes.max_image_dimension,
                 jpeg_quality=config.eyes.jpeg_quality,
             )
-            ocr_text = ""
-            if image_description:
-                LOGGER.info("!tiivistä: using Eyes VLM description")
+            if direct_summary and direct_summary.strip():
+                LOGGER.info("!tiivistä: using Eyes VLM summary directly")
+                summary_from_vision = direct_summary.strip()
             else:
                 LOGGER.warning(
-                    "!tiivistä: Eyes description empty, using local YOLO/OCR fallback"
+                    "!tiivistä: Eyes summary empty, using description+Ollama fallback"
                 )
-                yolo_task = asyncio.to_thread(
-                    recognize_objects_with_yolo,
+                image_description = await describe_image_with_eyes(
                     photo_bytes,
-                    model_name=config.tiivista.yolo_model,
-                    confidence_threshold=config.tiivista.yolo_confidence_threshold,
+                    config.tiivista.vision_prompt,
+                    base_url=config.eyes.base_url,
+                    model=config.eyes.model,
+                    max_tokens=config.tiivista.vision_max_tokens,
+                    timeout_seconds=config.eyes.timeout_seconds,
+                    max_dimension=config.eyes.max_image_dimension,
+                    jpeg_quality=config.eyes.jpeg_quality,
                 )
-
-                if config.tiivista.ocr_enabled:
-                    ocr_task = asyncio.to_thread(
-                        extract_text_with_ocr,
+                ocr_text = ""
+                if image_description:
+                    LOGGER.info("!tiivistä: using Eyes VLM description")
+                else:
+                    LOGGER.warning(
+                        "!tiivistä: Eyes description empty, using local YOLO/OCR fallback"
+                    )
+                    yolo_task = asyncio.to_thread(
+                        recognize_objects_with_yolo,
                         photo_bytes,
-                        tesseract_cmd=config.tiivista.ocr_tesseract_cmd,
-                        lang=config.tiivista.ocr_language,
-                        tessdata_dir=config.tiivista.ocr_tessdata_dir,
-                        timeout_seconds=config.tiivista.ocr_timeout_seconds,
+                        model_name=config.tiivista.yolo_model,
+                        confidence_threshold=config.tiivista.yolo_confidence_threshold,
                     )
-                    yolo_res, ocr_res = await asyncio.gather(
-                        yolo_task, ocr_task, return_exceptions=True
-                    )
-                else:
-                    try:
-                        yolo_res = await yolo_task
-                    except Exception as exc:
-                        yolo_res = exc
-                    ocr_res = ""
 
-                if isinstance(yolo_res, Exception):
-                    LOGGER.exception(
-                        "Error performing YOLO object recognition for tiivistä command",
-                        exc_info=yolo_res,
-                    )
-                    image_description = ""
-                else:
-                    image_description = yolo_res or ""
+                    if config.tiivista.ocr_enabled:
+                        ocr_task = asyncio.to_thread(
+                            extract_text_with_ocr,
+                            photo_bytes,
+                            tesseract_cmd=config.tiivista.ocr_tesseract_cmd,
+                            lang=config.tiivista.ocr_language,
+                            tessdata_dir=config.tiivista.ocr_tessdata_dir,
+                            timeout_seconds=config.tiivista.ocr_timeout_seconds,
+                        )
+                        yolo_res, ocr_res = await asyncio.gather(
+                            yolo_task, ocr_task, return_exceptions=True
+                        )
+                    else:
+                        try:
+                            yolo_res = await yolo_task
+                        except Exception as exc:
+                            yolo_res = exc
+                        ocr_res = ""
 
-                if isinstance(ocr_res, Exception):
-                    LOGGER.exception(
-                        "Error performing OCR for tiivistä command",
-                        exc_info=ocr_res,
-                    )
-                    ocr_text = ""
-                else:
-                    ocr_text = ocr_res or ""
+                    if isinstance(yolo_res, Exception):
+                        LOGGER.exception(
+                            "Error performing YOLO object recognition for tiivistä command",
+                            exc_info=yolo_res,
+                        )
+                        image_description = ""
+                    else:
+                        image_description = yolo_res or ""
 
-            if not image_description and not ocr_text and not raw_text:
+                    if isinstance(ocr_res, Exception):
+                        LOGGER.exception(
+                            "Error performing OCR for tiivistä command",
+                            exc_info=ocr_res,
+                        )
+                        ocr_text = ""
+                    else:
+                        ocr_text = ocr_res or ""
+
+            if (
+                not summary_from_vision
+                and not image_description
+                and not ocr_text
+                and not raw_text
+            ):
                 await reply_in_chunks(
                     update, "Virhe kuvan tunnistuksessa.", config.max_reply_length
                 )
@@ -202,34 +230,37 @@ def _build_handler(
         else:
             source_text = raw_text
 
-        if not source_text or not source_text.strip():
-            await reply_in_chunks(
-                update,
-                "Ei löydetty tekstiä tiivistettäväksi.",
-                config.max_reply_length,
-            )
-            return
+        if summary_from_vision:
+            summary = summary_from_vision[: config.tiivista.max_text_length]
+        else:
+            if not source_text or not source_text.strip():
+                await reply_in_chunks(
+                    update,
+                    "Ei löydetty tekstiä tiivistettäväksi.",
+                    config.max_reply_length,
+                )
+                return
 
-        # Truncate source text if it exceeds maximum context length
-        if len(source_text) > config.tiivista.max_text_length:
-            source_text = source_text[: config.tiivista.max_text_length]
+            # Truncate source text if it exceeds maximum context length
+            if len(source_text) > config.tiivista.max_text_length:
+                source_text = source_text[: config.tiivista.max_text_length]
 
-        try:
-            summary = await summarize_text_with_ollama(
-                base_url=config.ollama.base_url,
-                model=config.ollama.model,
-                text=source_text,
-                num_predict=config.tiivista.summary_num_predict,
-                num_ctx=config.ollama.num_ctx,
-                timeout_seconds=config.ollama.timeout_seconds,
-                system_prompt=config.tiivista.system_prompt,
-            )
-        except Exception:
-            LOGGER.exception("Error summarizing text with Ollama")
-            await reply_in_chunks(
-                update, "Virhe tiivistelmän luonnissa.", config.max_reply_length
-            )
-            return
+            try:
+                summary = await summarize_text_with_ollama(
+                    base_url=config.ollama.base_url,
+                    model=config.ollama.model,
+                    text=source_text,
+                    num_predict=config.tiivista.summary_num_predict,
+                    num_ctx=config.ollama.num_ctx,
+                    timeout_seconds=config.ollama.timeout_seconds,
+                    system_prompt=config.tiivista.system_prompt,
+                )
+            except Exception:
+                LOGGER.exception("Error summarizing text with Ollama")
+                await reply_in_chunks(
+                    update, "Virhe tiivistelmän luonnissa.", config.max_reply_length
+                )
+                return
 
         if not summary or not summary.strip():
             await reply_in_chunks(

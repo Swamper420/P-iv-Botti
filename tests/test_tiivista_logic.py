@@ -326,6 +326,7 @@ class TiivistaVisionConfigTests(unittest.TestCase):
                 config = BotConfig.from_environment()
         self.assertIn("Kuvaile", config.tiivista.vision_prompt)
         self.assertEqual(config.tiivista.vision_max_tokens, 800)
+        self.assertIn("kuvan sisältö", config.tiivista.direct_prompt)
 
     def test_custom_values_from_environment(self) -> None:
         from bot.config import BotConfig
@@ -334,12 +335,14 @@ class TiivistaVisionConfigTests(unittest.TestCase):
             "TELEGRAM_BOT_TOKEN": "token",
             "TIIVISTA_VISION_PROMPT": "Custom vision prompt",
             "TIIVISTA_VISION_MAX_TOKENS": "1000",
+            "TIIVISTA_DIRECT_PROMPT": "Custom direct summary",
         }
         with patch("bot.config._load_env_file"):
             with patch.dict(os.environ, env, clear=True):
                 config = BotConfig.from_environment()
         self.assertEqual(config.tiivista.vision_prompt, "Custom vision prompt")
         self.assertEqual(config.tiivista.vision_max_tokens, 1000)
+        self.assertEqual(config.tiivista.direct_prompt, "Custom direct summary")
 
     def test_invalid_values_raise(self) -> None:
         from bot.config import BotConfig
@@ -348,6 +351,7 @@ class TiivistaVisionConfigTests(unittest.TestCase):
             ("TIIVISTA_VISION_PROMPT", "   "),
             ("TIIVISTA_VISION_MAX_TOKENS", "0"),
             ("TIIVISTA_VISION_MAX_TOKENS", "5000"),
+            ("TIIVISTA_DIRECT_PROMPT", "   "),
         ]
         for key, value in invalid:
             with self.subTest(key=key, value=value):
@@ -358,6 +362,62 @@ class TiivistaVisionConfigTests(unittest.TestCase):
                 ):
                     with self.assertRaises(ValueError):
                         BotConfig.from_environment()
+
+
+class TiivistaDirectSummaryHandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_eyes_summary_skips_ollama(self) -> None:
+        from pathlib import Path
+
+        from bot.commands.tiivista import _build_handler
+        from bot.config import BotConfig, TtsConfig
+
+        config = BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+            tts=TtsConfig(reencode_audio=False),
+        )
+        handler = _build_handler(config)
+
+        update = MagicMock()
+        photo = MagicMock()
+        photo.file_id = "file123"
+        message = update.effective_message
+        message.photo = [photo]
+        message.caption = "!tiivistä"
+        message.text = None
+        message.reply_to_message = None
+        message.reply_voice = AsyncMock()
+        update.effective_chat.id = 1234
+        context = MagicMock()
+        tg_file = MagicMock()
+        tg_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"img"))
+        context.bot.get_file = AsyncMock(return_value=tg_file)
+        context.bot.send_chat_action = AsyncMock()
+
+        with patch("bot.commands.common.track_active_chat"), \
+            patch(
+                "bot.commands.tiivista.describe_image_with_eyes",
+                AsyncMock(return_value="Kuvassa on punainen auto kadulla."),
+            ) as mock_eyes, \
+            patch(
+                "bot.commands.tiivista.summarize_text_with_ollama",
+                side_effect=AssertionError("Ollama must not be called on direct path"),
+            ), \
+            patch(
+                "bot.commands.tiivista.synthesize_speech",
+                AsyncMock(return_value=b"audio"),
+            ):
+            await handler(update, context)
+
+        mock_eyes.assert_awaited_once()
+        message.reply_voice.assert_awaited_once()
+        self.assertEqual(
+            message.reply_voice.await_args.kwargs["caption"], "Kuvassa on punainen"
+        )
 
 
 if __name__ == "__main__":

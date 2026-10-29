@@ -168,6 +168,12 @@ class TiivistaConfig:
         "Vastaa tiiviisti, enintään muutamalla virkkeellä."
     )
     vision_max_tokens: int = 800
+    direct_prompt: str = (
+        "Tiivistä tämän kuvan sisältö tiiviiksi, selkeäksi ja sujuvaksi "
+        "suomenkieliseksi yhteenvedoksi. Kerro mitä kuvassa näkyy ja toista "
+        "mahdollinen kuvassa näkyvä teksti. Vastaa pelkällä tiivistelmällä "
+        "ilman alustuksia, sillä se luetaan ääneen."
+    )
 
 
 @dataclass(frozen=True)
@@ -188,6 +194,14 @@ class MemeConfig:
     )
     vision_max_tokens: int = 500
     caption_num_predict: int = 120
+    direct_prompt: str = (
+        "Keksi tähän kuvaan hauska suomenkielinen meemiteksti. "
+        "Vastaa täsmälleen kahdella eri rivillä: ensimmäisellä rivillä "
+        "YLÄ: <lyhyt iskulause, 4-6 sanaa> ja toisella rivillä "
+        "ALA: <lyhyt punchline, 4-6 sanaa>. Molemmat rivit enintään 6 sanaa. "
+        "Älä yhdistä molempia samalle riville. "
+        "Ei muuta tekstiä, ei lainausmerkkejä."
+    )
     system_prompt: str = (
         "Keksi kuvaan hauska suomenkielinen meemiteksti. "
         "Saat kuvahavainnot, kuvasta luetun tekstin ja käyttäjän vihjeen. "
@@ -755,6 +769,13 @@ class BotConfig:
         if not 1 <= tiivista_vision_max_tokens <= 4096:
             raise ValueError("TIIVISTA_VISION_MAX_TOKENS must be between 1 and 4096")
 
+        default_tiivista_direct_prompt = TiivistaConfig.direct_prompt
+        tiivista_direct_prompt = os.getenv(
+            "TIIVISTA_DIRECT_PROMPT", default_tiivista_direct_prompt
+        ).strip()
+        if not tiivista_direct_prompt:
+            raise ValueError("TIIVISTA_DIRECT_PROMPT must not be empty")
+
         default_tiivista_prompt = (
             "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
             "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
@@ -782,6 +803,7 @@ class BotConfig:
             ocr_timeout_seconds=tiivista_ocr_timeout_seconds,
             vision_prompt=tiivista_vision_prompt,
             vision_max_tokens=tiivista_vision_max_tokens,
+            direct_prompt=tiivista_direct_prompt,
         )
 
         meme_max_image_bytes = int(
@@ -836,6 +858,13 @@ class BotConfig:
         if not meme_vision_prompt:
             raise ValueError("MEME_VISION_PROMPT must not be empty")
 
+        default_meme_direct_prompt = MemeConfig.direct_prompt
+        meme_direct_prompt = os.getenv(
+            "MEME_DIRECT_PROMPT", default_meme_direct_prompt
+        ).strip()
+        if not meme_direct_prompt:
+            raise ValueError("MEME_DIRECT_PROMPT must not be empty")
+
         meme_vision_max_tokens = int(os.getenv("MEME_VISION_MAX_TOKENS", "500"))
         if not 1 <= meme_vision_max_tokens <= 4096:
             raise ValueError("MEME_VISION_MAX_TOKENS must be between 1 and 4096")
@@ -886,6 +915,7 @@ class BotConfig:
             vision_prompt=meme_vision_prompt,
             vision_max_tokens=meme_vision_max_tokens,
             caption_num_predict=meme_caption_num_predict,
+            direct_prompt=meme_direct_prompt,
             system_prompt=meme_system_prompt,
             max_top_chars=meme_max_top_chars,
             max_bottom_chars=meme_max_bottom_chars,

@@ -26,9 +26,9 @@ from bot.vision import describe_image_with_eyes
 COMMAND_USAGE = (
     "!meme [vihje] - Luo meemi kuvasta. Lähetä kuva captionilla "
     "!meme [vihje] tai vastaa kuvaan komennolla !meme [vihje].\n"
-    "Botti kuvailee kuvan ulkoisella näkömallilla (Eyes), keksii siihen "
-    "paikallisella tekoälyllä (Ollama) hauskan ylä- ja alatekstin "
-    "ja renderöi sen klassiseen meemityyliin alkuperäisen kuvan päälle."
+    "Ulkoinen näkömalli (Eyes) keksii kuvaan hauskan ylä- ja alatekstin "
+    "suoraan kuvasta ja renderöi sen klassiseen meemityyliin "
+    "alkuperäisen kuvan päälle."
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -93,113 +93,151 @@ def _build_handler(
             )
             return
 
-        # Primary perception: external Eyes VLM description.
-        # Local YOLO + OCR kept only as fallback when Eyes fails.
-        image_description = await describe_image_with_eyes(
+        # Primary: Eyes VLM generates the meme caption directly from the image.
+        # Fallback: Eyes description (or local YOLO + OCR) + Ollama captioning.
+        direct_prompt = config.meme.direct_prompt
+        if hint:
+            direct_prompt += f"\nKäyttäjän vihje: {hint[:300]}"
+        direct_caption = await describe_image_with_eyes(
             photo_bytes,
-            config.meme.vision_prompt,
+            direct_prompt,
             base_url=config.eyes.base_url,
             model=config.eyes.model,
-            max_tokens=config.meme.vision_max_tokens,
+            max_tokens=config.meme.caption_num_predict,
             timeout_seconds=config.eyes.timeout_seconds,
             max_dimension=config.eyes.max_image_dimension,
             jpeg_quality=config.eyes.jpeg_quality,
         )
-        ocr_text = ""
+        top_text, bottom_text = ("", "")
+        if direct_caption:
+            raw_top, raw_bottom = parse_meme_caption(direct_caption)
+            top_text = sanitize_caption_line(
+                raw_top, config.meme.max_top_chars, config.meme.max_top_words
+            )
+            bottom_text = sanitize_caption_line(
+                raw_bottom, config.meme.max_bottom_chars, config.meme.max_bottom_words
+            )
 
-        if not image_description:
-            LOGGER.warning("!meme: Eyes description empty, using local YOLO/OCR fallback")
-            yolo_task = asyncio.to_thread(
-                recognize_objects_with_yolo,
+        async def _ollama_fallback() -> tuple[str, str] | None:
+            """Describe + Ollama caption path. Returns None if already replied."""
+            image_description = await describe_image_with_eyes(
                 photo_bytes,
-                model_name=config.meme.yolo_model,
-                confidence_threshold=config.meme.yolo_confidence_threshold,
+                config.meme.vision_prompt,
+                base_url=config.eyes.base_url,
+                model=config.eyes.model,
+                max_tokens=config.meme.vision_max_tokens,
+                timeout_seconds=config.eyes.timeout_seconds,
+                max_dimension=config.eyes.max_image_dimension,
+                jpeg_quality=config.eyes.jpeg_quality,
             )
-            if config.meme.ocr_enabled:
-                ocr_task = asyncio.to_thread(
-                    extract_text_with_ocr,
+            ocr_text = ""
+
+            if not image_description:
+                LOGGER.warning(
+                    "!meme: Eyes description empty, using local YOLO/OCR fallback"
+                )
+                yolo_task = asyncio.to_thread(
+                    recognize_objects_with_yolo,
                     photo_bytes,
-                    tesseract_cmd=config.meme.ocr_tesseract_cmd,
-                    lang=config.meme.ocr_language,
-                    tessdata_dir=config.meme.ocr_tessdata_dir,
-                    timeout_seconds=config.meme.ocr_timeout_seconds,
+                    model_name=config.meme.yolo_model,
+                    confidence_threshold=config.meme.yolo_confidence_threshold,
                 )
-                yolo_res, ocr_res = await asyncio.gather(
-                    yolo_task, ocr_task, return_exceptions=True
-                )
-            else:
-                try:
-                    yolo_res = await yolo_task
-                except Exception as exc:
-                    yolo_res = exc
-                ocr_res = ""
+                if config.meme.ocr_enabled:
+                    ocr_task = asyncio.to_thread(
+                        extract_text_with_ocr,
+                        photo_bytes,
+                        tesseract_cmd=config.meme.ocr_tesseract_cmd,
+                        lang=config.meme.ocr_language,
+                        tessdata_dir=config.meme.ocr_tessdata_dir,
+                        timeout_seconds=config.meme.ocr_timeout_seconds,
+                    )
+                    yolo_res, ocr_res = await asyncio.gather(
+                        yolo_task, ocr_task, return_exceptions=True
+                    )
+                else:
+                    try:
+                        yolo_res = await yolo_task
+                    except Exception as exc:
+                        yolo_res = exc
+                    ocr_res = ""
 
-            if isinstance(yolo_res, Exception):
-                LOGGER.exception("!meme: YOLO recognition failed", exc_info=yolo_res)
-                image_description = ""
-            else:
-                image_description = yolo_res or ""
+                if isinstance(yolo_res, Exception):
+                    LOGGER.exception("!meme: YOLO recognition failed", exc_info=yolo_res)
+                    image_description = ""
+                else:
+                    image_description = yolo_res or ""
 
-            if isinstance(ocr_res, Exception):
-                LOGGER.exception("!meme: OCR failed", exc_info=ocr_res)
-                ocr_text = ""
-            else:
-                ocr_text = ocr_res or ""
+                if isinstance(ocr_res, Exception):
+                    LOGGER.exception("!meme: OCR failed", exc_info=ocr_res)
+                    ocr_text = ""
+                else:
+                    ocr_text = ocr_res or ""
 
-        prompt = build_meme_prompt(
-            image_description=image_description,
-            ocr_text=ocr_text,
-            user_hint=hint,
-        )
-        if not prompt:
-            await reply_in_chunks(
-                update,
-                "Kuvasta ei saatu tunnistetta (ei kohteita, ei tekstiä) "
-                "eikä vihjettä annettu. Yritä toista kuvaa tai lisää vihje: "
-                "!meme <vihje>.",
-                config.max_reply_length,
-            )
-            return
-
-        # Local captioning via Ollama; fall back to perception-only caption.
-        raw_caption = ""
-        try:
-            chunks: list[str] = []
-            async for chunk in stream_ollama_completion(
-                base_url=config.ollama.base_url,
-                model=config.ollama.model,
-                prompt=prompt,
-                num_predict=config.meme.caption_num_predict,
-                num_ctx=config.ollama.num_ctx,
-                timeout_seconds=config.ollama.timeout_seconds,
-                system_prompt=config.meme.system_prompt,
-            ):
-                chunks.append(chunk)
-            raw_caption = "".join(chunks).strip()
-        except Exception:
-            LOGGER.exception("!meme: Ollama caption generation failed")
-
-        top_text, bottom_text = parse_meme_caption(raw_caption)
-        top_text = sanitize_caption_line(
-            top_text, config.meme.max_top_chars, config.meme.max_top_words
-        )
-        bottom_text = sanitize_caption_line(
-            bottom_text, config.meme.max_bottom_chars, config.meme.max_bottom_words
-        )
-        if not top_text and not bottom_text:
-            if raw_caption:
-                LOGGER.warning("!meme: unparsable Ollama caption, using fallback")
-            else:
-                LOGGER.warning("!meme: empty Ollama caption, using fallback")
-            top_text, bottom_text = fallback_caption(
+            prompt = build_meme_prompt(
                 image_description=image_description,
                 ocr_text=ocr_text,
                 user_hint=hint,
-                max_top_chars=config.meme.max_top_chars,
-                max_bottom_chars=config.meme.max_bottom_chars,
-                max_top_words=config.meme.max_top_words,
-                max_bottom_words=config.meme.max_bottom_words,
             )
+            if not prompt:
+                await reply_in_chunks(
+                    update,
+                    "Kuvasta ei saatu tunnistetta (ei kohteita, ei tekstiä) "
+                    "eikä vihjettä annettu. Yritä toista kuvaa tai lisää vihje: "
+                    "!meme <vihje>.",
+                    config.max_reply_length,
+                )
+                return None
+
+            # Local captioning via Ollama; fall back to perception-only caption.
+            raw_caption = ""
+            try:
+                chunks: list[str] = []
+                async for chunk in stream_ollama_completion(
+                    base_url=config.ollama.base_url,
+                    model=config.ollama.model,
+                    prompt=prompt,
+                    num_predict=config.meme.caption_num_predict,
+                    num_ctx=config.ollama.num_ctx,
+                    timeout_seconds=config.ollama.timeout_seconds,
+                    system_prompt=config.meme.system_prompt,
+                ):
+                    chunks.append(chunk)
+                raw_caption = "".join(chunks).strip()
+            except Exception:
+                LOGGER.exception("!meme: Ollama caption generation failed")
+
+            fb_top, fb_bottom = parse_meme_caption(raw_caption)
+            fb_top = sanitize_caption_line(
+                fb_top, config.meme.max_top_chars, config.meme.max_top_words
+            )
+            fb_bottom = sanitize_caption_line(
+                fb_bottom, config.meme.max_bottom_chars, config.meme.max_bottom_words
+            )
+            if not fb_top and not fb_bottom:
+                if raw_caption:
+                    LOGGER.warning("!meme: unparsable Ollama caption, using fallback")
+                else:
+                    LOGGER.warning("!meme: empty Ollama caption, using fallback")
+                fb_top, fb_bottom = fallback_caption(
+                    image_description=image_description,
+                    ocr_text=ocr_text,
+                    user_hint=hint,
+                    max_top_chars=config.meme.max_top_chars,
+                    max_bottom_chars=config.meme.max_bottom_chars,
+                    max_top_words=config.meme.max_top_words,
+                    max_bottom_words=config.meme.max_bottom_words,
+                )
+            return fb_top, fb_bottom
+
+        if not top_text and not bottom_text:
+            if direct_caption:
+                LOGGER.warning("!meme: unparsable Eyes caption, using Ollama fallback")
+            else:
+                LOGGER.warning("!meme: empty Eyes caption, using Ollama fallback")
+            fallback_result = await _ollama_fallback()
+            if fallback_result is None:
+                return
+            top_text, bottom_text = fallback_result
 
         meme_bytes = await asyncio.to_thread(
             render_meme_on_photo,
@@ -221,16 +259,11 @@ def _build_handler(
             return
 
         caption = f"{top_text} / {bottom_text}" if bottom_text else top_text
-        fallback_lines = [caption]
-        if image_description:
-            fallback_lines.append(image_description)
-        if ocr_text:
-            fallback_lines.append(ocr_text)
         await reply_with_image(
             update,
             image=meme_bytes,
             caption=caption or None,
-            fallback_text="\n".join(fallback_lines),
+            fallback_text=caption or "Meemi",
             filename="meme.jpg",
             max_reply_length=config.max_reply_length,
         )

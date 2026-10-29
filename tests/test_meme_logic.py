@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
 
@@ -294,6 +294,8 @@ class MemeConfigTests(unittest.TestCase):
         self.assertEqual(config.meme.jpeg_quality, 90)
         self.assertIn("Kuvaile", config.meme.vision_prompt)
         self.assertEqual(config.meme.vision_max_tokens, 500)
+        self.assertIn("YLÄ", config.meme.direct_prompt)
+        self.assertIn("6 sanaa", config.meme.direct_prompt)
         self.assertEqual(config.eyes.base_url, "https://eyes.tsih.fi/v1")
         self.assertEqual(config.eyes.model, "eyes-gemma-4-12b-q4")
         self.assertEqual(config.eyes.timeout_seconds, 60)
@@ -312,6 +314,7 @@ class MemeConfigTests(unittest.TestCase):
             "MEME_MAX_BOTTOM_WORDS": "5",
             "MEME_MIN_FONT_SIZE": "24",
             "MEME_MAX_CAPTION_FRACTION": "0.3",
+            "MEME_DIRECT_PROMPT": "Custom direct caption",
             "MEME_OUTPUT_MAX_WIDTH": "800",
             "MEME_JPEG_QUALITY": "80",
         }
@@ -328,6 +331,7 @@ class MemeConfigTests(unittest.TestCase):
         self.assertEqual(config.meme.max_bottom_words, 5)
         self.assertEqual(config.meme.min_font_size, 24)
         self.assertAlmostEqual(config.meme.max_caption_fraction, 0.3)
+        self.assertEqual(config.meme.direct_prompt, "Custom direct caption")
         self.assertEqual(config.meme.output_max_width, 800)
         self.assertEqual(config.meme.jpeg_quality, 80)
 
@@ -338,6 +342,7 @@ class MemeConfigTests(unittest.TestCase):
             ("MEME_OCR_TIMEOUT_SECONDS", "0"),
             ("MEME_CAPTION_NUM_PREDICT", "0"),
             ("MEME_SYSTEM_PROMPT", "   "),
+            ("MEME_DIRECT_PROMPT", "   "),
             ("MEME_VISION_PROMPT", "   "),
             ("MEME_VISION_MAX_TOKENS", "0"),
             ("MEME_VISION_MAX_TOKENS", "5000"),
@@ -369,6 +374,96 @@ class MemeConfigTests(unittest.TestCase):
                 ):
                     with self.assertRaises(ValueError):
                         BotConfig.from_environment()
+
+
+class MemeDirectCaptionHandlerTests(unittest.IsolatedAsyncioTestCase):
+    def _make_config(self) -> BotConfig:
+        from pathlib import Path
+
+        return BotConfig(
+            telegram_bot_token="token",
+            storage_dir=Path("."),
+            max_reply_length=5000,
+            weather=MagicMock(),
+            cs2_rss=MagicMock(),
+            naama=MagicMock(),
+        )
+
+    def _make_update_context(self) -> tuple[MagicMock, MagicMock]:
+        update = MagicMock()
+        photo = MagicMock()
+        photo.file_id = "file123"
+        message = update.effective_message
+        message.photo = [photo]
+        message.caption = "!meme kissa"
+        message.text = None
+        message.reply_to_message = None
+        update.effective_chat.id = 1234
+        context = MagicMock()
+        tg_file = MagicMock()
+        tg_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"img"))
+        context.bot.get_file = AsyncMock(return_value=tg_file)
+        context.bot.send_chat_action = AsyncMock()
+        return update, context
+
+    async def test_direct_eyes_caption_skips_ollama(self) -> None:
+        from bot.commands.meme import _build_handler
+
+        handler = _build_handler(self._make_config())
+        update, context = self._make_update_context()
+        with patch("bot.commands.common.track_active_chat"), \
+            patch(
+                "bot.commands.meme.describe_image_with_eyes",
+                AsyncMock(return_value="YLÄ: Kissa istuu\nALA: Omistaja nukkuu"),
+            ) as mock_eyes, \
+            patch(
+                "bot.commands.meme.stream_ollama_completion",
+                side_effect=AssertionError("Ollama must not be called on direct path"),
+            ), \
+            patch(
+                "bot.commands.meme.render_meme_on_photo", return_value=b"memejpeg"
+            ), \
+            patch(
+                "bot.commands.meme.reply_with_image", new=AsyncMock()
+            ) as mock_reply_img:
+            await handler(update, context)
+        mock_eyes.assert_awaited_once()
+        direct_prompt = mock_eyes.await_args.args[1]
+        self.assertIn("Käyttäjän vihje: kissa", direct_prompt)
+        mock_reply_img.assert_awaited_once()
+        self.assertEqual(
+            mock_reply_img.await_args.kwargs["caption"],
+            "KISSA ISTUU / OMISTAJA NUKKUU",
+        )
+
+    async def test_direct_failure_falls_back_to_ollama(self) -> None:
+        from bot.commands.meme import _build_handler
+
+        async def fake_stream(**kwargs: object):
+            yield "YLÄ: Kissa katsoo\n"
+            yield "ALA: Koira nukkuu"
+
+        handler = _build_handler(self._make_config())
+        update, context = self._make_update_context()
+        with patch("bot.commands.common.track_active_chat"), \
+            patch(
+                "bot.commands.meme.describe_image_with_eyes",
+                AsyncMock(side_effect=["", "Kuvassa on kissa sohvalla."]),
+            ) as mock_eyes, \
+            patch("bot.commands.meme.stream_ollama_completion", fake_stream), \
+            patch(
+                "bot.commands.meme.render_meme_on_photo", return_value=b"memejpeg"
+            ), \
+            patch(
+                "bot.commands.meme.reply_with_image", new=AsyncMock()
+            ) as mock_reply_img:
+            await handler(update, context)
+        self.assertEqual(mock_eyes.await_count, 2)
+        mock_reply_img.assert_awaited_once()
+        self.assertEqual(
+            mock_reply_img.await_args.kwargs["caption"],
+            "KISSA KATSOO / KOIRA NUKKUU",
+        )
 
 
 if __name__ == "__main__":
