@@ -74,7 +74,8 @@ def build_meme_prompt(
 
     sections.append(
         "Keksi hauska meemiteksti. Vastaa täsmälleen kahdella eri rivillä: "
-        "ensimmäisellä rivillä YLÄ: ... ja toisella rivillä ALA: .... "
+        "ensimmäisellä rivillä YLÄ: <isku­lause, 4-6 sanaa> ja toisella rivillä "
+        "ALA: <punchline, 4-6 sanaa>. Molemmat rivit lyhyitä, enintään 6 sanaa. "
         "Älä yhdistä molempia samalle riville."
     )
     return "\n".join(sections)
@@ -97,12 +98,26 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[: max(0, max_chars - 1)].rstrip() + "…"
 
 
-def sanitize_caption_line(line: str, max_chars: int) -> str:
-    """Normalize one caption line to classic uppercase meme style."""
+def _truncate_words(text: str, max_words: int) -> str:
+    """Hard-cut text to at most max_words words (clean cut, no ellipsis)."""
+    if max_words < 1:
+        return ""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words])
+
+
+def sanitize_caption_line(line: str, max_chars: int, max_words: int = 6) -> str:
+    """Normalize one caption line to classic uppercase meme style.
+
+    Caps at max_words words first (clean cut), then at max_chars characters.
+    """
     cleaned = _clean_line(line)
     if not cleaned:
         return ""
-    return _truncate(cleaned.upper(), max_chars)
+    capped = _truncate_words(cleaned.upper(), max_words)
+    return _truncate(capped, max_chars)
 
 
 _LABEL_FINDER = re.compile(
@@ -200,8 +215,10 @@ def fallback_caption(
     image_description: str = "",
     ocr_text: str = "",
     user_hint: str = "",
-    max_top_chars: int = 60,
-    max_bottom_chars: int = 60,
+    max_top_chars: int = 40,
+    max_bottom_chars: int = 40,
+    max_top_words: int = 6,
+    max_bottom_words: int = 6,
 ) -> tuple[str, str]:
     """Deterministic caption used when Ollama is unavailable or returns nothing.
 
@@ -239,8 +256,8 @@ def fallback_caption(
                 break
 
     return (
-        sanitize_caption_line(top_raw, max_top_chars),
-        sanitize_caption_line(bottom_raw, max_bottom_chars),
+        sanitize_caption_line(top_raw, max_top_chars, max_top_words),
+        sanitize_caption_line(bottom_raw, max_bottom_chars, max_bottom_words),
     )
 
 
@@ -260,6 +277,33 @@ def _load_bold_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return font
 
 
+def _split_long_word(
+    word: str,
+    draw: ImageDraw.ImageDraw,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    """Char-split a single word that is wider than max_width.
+
+    Last resort for very long compound words so text never overflows the
+    image horizontally.
+    """
+    parts: list[str] = []
+    current = ""
+    for char in word:
+        candidate = current + char
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = candidate
+        else:
+            if current:
+                parts.append(current)
+            current = char
+    if current:
+        parts.append(current)
+    return parts or [word]
+
+
 def _wrap_line(
     draw: ImageDraw.ImageDraw,
     line: str,
@@ -270,6 +314,15 @@ def _wrap_line(
     wrapped: list[str] = []
     current = ""
     for word in words:
+        # A single word wider than the image must be split, otherwise it
+        # would overflow horizontally no matter how lines wrap.
+        bbox = draw.textbbox((0, 0), word, font=font)
+        if bbox[2] - bbox[0] > max_width:
+            if current:
+                wrapped.append(current)
+                current = ""
+            wrapped.extend(_split_long_word(word, draw, font, max_width))
+            continue
         candidate = f"{current} {word}".strip() if current else word
         bbox = draw.textbbox((0, 0), candidate, font=font)
         if bbox[2] - bbox[0] <= max_width:
@@ -281,6 +334,35 @@ def _wrap_line(
     if current:
         wrapped.append(current)
     return wrapped or [""]
+
+
+def _measure_block(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    line_spacing: int = 4,
+) -> tuple[int, int]:
+    """Return (block_height, max_line_width) for wrapped lines."""
+    height = 0
+    max_width = 0
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        height += (bbox[3] - bbox[1]) + line_spacing
+        max_width = max(max_width, bbox[2] - bbox[0])
+    return height, max_width
+
+
+def _wrap_block(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    lines: list[str] = []
+    for raw_line in (text or "").splitlines():
+        if raw_line.strip():
+            lines.extend(_wrap_line(draw, raw_line.strip(), font, max_width))
+    return lines
 
 
 def _draw_centered_block(
@@ -313,10 +395,15 @@ def render_meme_on_photo(
     *,
     output_max_width: int = 1080,
     jpeg_quality: int = 90,
+    min_font_size: int = 20,
+    max_caption_fraction: float = 0.22,
 ) -> bytes | None:
     """Render classic top/bottom meme captions over the given photo.
 
-    Returns JPEG bytes, or None when the input is not a readable image.
+    The font starts large (scaled by image width) and shrinks until both
+    caption blocks fit within max_caption_fraction of the image height each
+    without overflowing horizontally. Returns JPEG bytes, or None when the
+    input is not a readable image.
     """
     if not image_bytes:
         return None
@@ -332,25 +419,35 @@ def render_meme_on_photo(
         photo = photo.resize((output_max_width, new_height), Image.LANCZOS)
 
     width, height = photo.size
-    font_size = min(72, max(24, width // 12))
-    outline_width = max(2, font_size // 16)
     margin = max(10, width // 40)
     max_text_width = max(50, width - margin * 2)
+    max_block_height = max(20, int(height * max_caption_fraction))
+    min_font_size = max(8, min_font_size)
+
+    font_size = min(72, max(min_font_size, width // 12))
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
     font = _load_bold_font(font_size)
+    top_lines = _wrap_block(probe, top_text, font, max_text_width)
+    bottom_lines = _wrap_block(probe, bottom_text, font, max_text_width)
+
+    # Shrink until both blocks fit vertically and horizontally.
+    while font_size > min_font_size:
+        top_h, top_w = _measure_block(probe, top_lines, font)
+        bottom_h, bottom_w = _measure_block(probe, bottom_lines, font)
+        fits_height = (not top_lines or top_h <= max_block_height) and (
+            not bottom_lines or bottom_h <= max_block_height
+        )
+        fits_width = top_w <= max_text_width and bottom_w <= max_text_width
+        if fits_height and fits_width:
+            break
+        font_size = max(min_font_size, font_size - 2)
+        font = _load_bold_font(font_size)
+        top_lines = _wrap_block(probe, top_text, font, max_text_width)
+        bottom_lines = _wrap_block(probe, bottom_text, font, max_text_width)
+
+    outline_width = max(2, font_size // 16)
     draw = ImageDraw.Draw(photo)
-
-    top_lines: list[str] = []
-    for raw_line in (top_text or "").splitlines():
-        if raw_line.strip():
-            top_lines.extend(_wrap_line(draw, raw_line.strip(), font, max_text_width))
-
-    bottom_lines: list[str] = []
-    for raw_line in (bottom_text or "").splitlines():
-        if raw_line.strip():
-            bottom_lines.extend(
-                _wrap_line(draw, raw_line.strip(), font, max_text_width)
-            )
 
     if top_lines:
         _draw_centered_block(draw, top_lines, font, width, margin, outline_width)

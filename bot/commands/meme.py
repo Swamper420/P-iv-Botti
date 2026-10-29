@@ -180,8 +180,12 @@ def _build_handler(
             LOGGER.exception("!meme: Ollama caption generation failed")
 
         top_text, bottom_text = parse_meme_caption(raw_caption)
-        top_text = sanitize_caption_line(top_text, config.meme.max_top_chars)
-        bottom_text = sanitize_caption_line(bottom_text, config.meme.max_bottom_chars)
+        top_text = sanitize_caption_line(
+            top_text, config.meme.max_top_chars, config.meme.max_top_words
+        )
+        bottom_text = sanitize_caption_line(
+            bottom_text, config.meme.max_bottom_chars, config.meme.max_bottom_words
+        )
         if not top_text and not bottom_text:
             if raw_caption:
                 LOGGER.warning("!meme: unparsable Ollama caption, using fallback")
@@ -193,6 +197,8 @@ def _build_handler(
                 user_hint=hint,
                 max_top_chars=config.meme.max_top_chars,
                 max_bottom_chars=config.meme.max_bottom_chars,
+                max_top_words=config.meme.max_top_words,
+                max_bottom_words=config.meme.max_bottom_words,
             )
 
         meme_bytes = await asyncio.to_thread(
@@ -202,6 +208,8 @@ def _build_handler(
             bottom_text,
             output_max_width=config.meme.output_max_width,
             jpeg_quality=config.meme.jpeg_quality,
+            min_font_size=config.meme.min_font_size,
+            max_caption_fraction=config.meme.max_caption_fraction,
         )
         if not meme_bytes:
             LOGGER.error("!meme: rendering failed")

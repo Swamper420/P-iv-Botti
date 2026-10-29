@@ -153,6 +153,24 @@ class SanitizeCaptionLineTests(unittest.TestCase):
         self.assertEqual(result, "ABCD…")
         self.assertLessEqual(len(result), 5)
 
+    def test_caps_word_count_to_six_by_default(self) -> None:
+        result = sanitize_caption_line(
+            "yksi kaksi kolme neljä viisi kuusi seitsemän kahdeksan", 200
+        )
+        self.assertEqual(result, "YKSI KAKSI KOLME NELJÄ VIISI KUUSI")
+
+    def test_custom_word_cap(self) -> None:
+        result = sanitize_caption_line("a b c d e", 200, max_words=3)
+        self.assertEqual(result, "A B C")
+
+    def test_word_cap_applies_before_char_limit(self) -> None:
+        top, bottom = fallback_caption(
+            user_hint="yksi kaksi kolme neljä viisi kuusi seitsemän",
+            max_top_chars=200,
+            max_bottom_chars=200,
+        )
+        self.assertEqual(len(top.split()), 6)
+
     def test_empty(self) -> None:
         self.assertEqual(sanitize_caption_line("   ", 60), "")
 
@@ -228,6 +246,31 @@ class RenderMemeOnPhotoTests(unittest.TestCase):
         self.assertIsNone(render_meme_on_photo(b"", "A", "B"))
         self.assertIsNone(render_meme_on_photo(b"not-an-image", "A", "B"))
 
+    def test_long_captions_shrink_to_fit(self) -> None:
+        long_top = "TÄMÄ ON ERITTÄIN PITKÄ YLÄTEKSTI JOKA EI MAHDU"
+        long_bottom = "TÄMÄKIN ALATEKSTI ON LIIAN PITKÄ MAHTUAKSEEN"
+        result = render_meme_on_photo(
+            _png_bytes(width=640, height=480),
+            long_top,
+            long_bottom,
+            max_caption_fraction=0.22,
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.startswith(b"\xff\xd8"))
+        with Image.open(BytesIO(result)) as img:
+            self.assertEqual(img.size, (640, 480))
+
+    def test_single_long_word_does_not_overflow(self) -> None:
+        result = render_meme_on_photo(
+            _png_bytes(width=320, height=200),
+            "LENTOKONESUIHKUTURBIINIMOOTTORIAPUMEKAANIKKO",
+            "MEEMI",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.startswith(b"\xff\xd8"))
+
 
 class MemeConfigTests(unittest.TestCase):
     def test_defaults(self) -> None:
@@ -240,6 +283,13 @@ class MemeConfigTests(unittest.TestCase):
         self.assertTrue(config.meme.ocr_enabled)
         self.assertEqual(config.meme.caption_num_predict, 120)
         self.assertIn("YLÄ", config.meme.system_prompt)
+        self.assertIn("6 sanaa", config.meme.system_prompt)
+        self.assertEqual(config.meme.max_top_chars, 40)
+        self.assertEqual(config.meme.max_bottom_chars, 40)
+        self.assertEqual(config.meme.max_top_words, 6)
+        self.assertEqual(config.meme.max_bottom_words, 6)
+        self.assertEqual(config.meme.min_font_size, 20)
+        self.assertAlmostEqual(config.meme.max_caption_fraction, 0.22)
         self.assertEqual(config.meme.output_max_width, 1080)
         self.assertEqual(config.meme.jpeg_quality, 90)
         self.assertIn("Kuvaile", config.meme.vision_prompt)
@@ -257,6 +307,11 @@ class MemeConfigTests(unittest.TestCase):
             "MEME_OCR_ENABLED": "false",
             "MEME_CAPTION_NUM_PREDICT": "200",
             "MEME_MAX_TOP_CHARS": "42",
+            "MEME_MAX_BOTTOM_CHARS": "43",
+            "MEME_MAX_TOP_WORDS": "4",
+            "MEME_MAX_BOTTOM_WORDS": "5",
+            "MEME_MIN_FONT_SIZE": "24",
+            "MEME_MAX_CAPTION_FRACTION": "0.3",
             "MEME_OUTPUT_MAX_WIDTH": "800",
             "MEME_JPEG_QUALITY": "80",
         }
@@ -268,6 +323,11 @@ class MemeConfigTests(unittest.TestCase):
         self.assertFalse(config.meme.ocr_enabled)
         self.assertEqual(config.meme.caption_num_predict, 200)
         self.assertEqual(config.meme.max_top_chars, 42)
+        self.assertEqual(config.meme.max_bottom_chars, 43)
+        self.assertEqual(config.meme.max_top_words, 4)
+        self.assertEqual(config.meme.max_bottom_words, 5)
+        self.assertEqual(config.meme.min_font_size, 24)
+        self.assertAlmostEqual(config.meme.max_caption_fraction, 0.3)
         self.assertEqual(config.meme.output_max_width, 800)
         self.assertEqual(config.meme.jpeg_quality, 80)
 
@@ -283,6 +343,15 @@ class MemeConfigTests(unittest.TestCase):
             ("MEME_VISION_MAX_TOKENS", "5000"),
             ("MEME_MAX_TOP_CHARS", "0"),
             ("MEME_MAX_BOTTOM_CHARS", "0"),
+            ("MEME_MAX_TOP_WORDS", "0"),
+            ("MEME_MAX_TOP_WORDS", "21"),
+            ("MEME_MAX_BOTTOM_WORDS", "0"),
+            ("MEME_MAX_BOTTOM_WORDS", "21"),
+            ("MEME_MIN_FONT_SIZE", "7"),
+            ("MEME_MIN_FONT_SIZE", "101"),
+            ("MEME_MAX_CAPTION_FRACTION", "0.01"),
+            ("MEME_MAX_CAPTION_FRACTION", "0.5"),
+            ("MEME_MAX_CAPTION_FRACTION", "not_a_float"),
             ("MEME_OUTPUT_MAX_WIDTH", "50"),
             ("MEME_JPEG_QUALITY", "101"),
             ("EYES_TIMEOUT_SECONDS", "0"),

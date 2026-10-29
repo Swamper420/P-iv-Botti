@@ -5,6 +5,7 @@ import unittest
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 from PIL import Image
 
 from bot.vision import describe_image_with_eyes, prepare_image_data_url
@@ -105,6 +106,25 @@ class DescribeImageWithEyesTests(unittest.IsolatedAsyncioTestCase):
             client=mock_client,
         )
         self.assertEqual(result, "")
+
+    async def test_connect_error_returns_empty_without_traceback(self) -> None:
+        """DNS/connect failures (as seen on hosts without Eyes route) must
+        degrade to "" with a one-line warning, not an exception traceback."""
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ConnectError(
+            "[Errno -2] Name or service not known"
+        )
+        with patch("bot.vision.LOGGER") as mock_logger:
+            result = await describe_image_with_eyes(
+                _png_bytes(),
+                "Kuvaile",
+                base_url="https://eyes.tsih.fi/v1",
+                model="m",
+                client=mock_client,
+            )
+        self.assertEqual(result, "")
+        mock_logger.warning.assert_called_once()
+        mock_logger.exception.assert_not_called()
 
     async def test_empty_image_or_prompt_returns_empty(self) -> None:
         mock_client = AsyncMock()

@@ -123,6 +123,12 @@ async def describe_image_with_eyes(
         if not isinstance(data, dict):
             return ""
         return _extract_content_text(data)
+    except httpx.HTTPError as exc:
+        # Network-level failures (DNS, connect, timeout, HTTP status) are
+        # expected when the external service is unreachable: one-line warning,
+        # no traceback spam. Callers fall back to local perception.
+        LOGGER.warning("vision: Eyes request failed: %s", exc)
+        return ""
     except Exception:
         LOGGER.exception("vision: Eyes image description failed")
         return ""

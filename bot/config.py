@@ -192,13 +192,17 @@ class MemeConfig:
         "Keksi kuvaan hauska suomenkielinen meemiteksti. "
         "Saat kuvahavainnot, kuvasta luetun tekstin ja käyttäjän vihjeen. "
         "Vastaa täsmälleen kahdella eri rivillä: ensimmäisellä rivillä "
-        "YLÄ: <lyhyt yläteksti, enintään 8 sanaa> ja toisella rivillä "
-        "ALA: <lyhyt punchline, enintään 8 sanaa>. "
+        "YLÄ: <lyhyt isku­lause, 4-6 sanaa> ja toisella rivillä "
+        "ALA: <lyhyt punchline, 4-6 sanaa>. Molemmat rivit enintään 6 sanaa. "
         "Älä yhdistä molempia samalle riville. "
         "Ei muuta tekstiä, ei lainausmerkkejä."
     )
-    max_top_chars: int = 60
-    max_bottom_chars: int = 60
+    max_top_chars: int = 40
+    max_bottom_chars: int = 40
+    max_top_words: int = 6
+    max_bottom_words: int = 6
+    min_font_size: int = 20
+    max_caption_fraction: float = 0.22
     output_max_width: int = 1080
     jpeg_quality: int = 90
 
@@ -836,13 +840,31 @@ class BotConfig:
         if not 1 <= meme_vision_max_tokens <= 4096:
             raise ValueError("MEME_VISION_MAX_TOKENS must be between 1 and 4096")
 
-        meme_max_top_chars = int(os.getenv("MEME_MAX_TOP_CHARS", "60"))
+        meme_max_top_chars = int(os.getenv("MEME_MAX_TOP_CHARS", "40"))
         if meme_max_top_chars < 1:
             raise ValueError("MEME_MAX_TOP_CHARS must be >= 1")
 
-        meme_max_bottom_chars = int(os.getenv("MEME_MAX_BOTTOM_CHARS", "60"))
+        meme_max_bottom_chars = int(os.getenv("MEME_MAX_BOTTOM_CHARS", "40"))
         if meme_max_bottom_chars < 1:
             raise ValueError("MEME_MAX_BOTTOM_CHARS must be >= 1")
+
+        meme_max_top_words = int(os.getenv("MEME_MAX_TOP_WORDS", "6"))
+        if not 1 <= meme_max_top_words <= 20:
+            raise ValueError("MEME_MAX_TOP_WORDS must be between 1 and 20")
+
+        meme_max_bottom_words = int(os.getenv("MEME_MAX_BOTTOM_WORDS", "6"))
+        if not 1 <= meme_max_bottom_words <= 20:
+            raise ValueError("MEME_MAX_BOTTOM_WORDS must be between 1 and 20")
+
+        meme_min_font_size = int(os.getenv("MEME_MIN_FONT_SIZE", "20"))
+        if not 8 <= meme_min_font_size <= 100:
+            raise ValueError("MEME_MIN_FONT_SIZE must be between 8 and 100")
+
+        meme_max_caption_fraction = float(
+            os.getenv("MEME_MAX_CAPTION_FRACTION", "0.22")
+        )
+        if not 0.05 <= meme_max_caption_fraction <= 0.45:
+            raise ValueError("MEME_MAX_CAPTION_FRACTION must be between 0.05 and 0.45")
 
         meme_output_max_width = int(os.getenv("MEME_OUTPUT_MAX_WIDTH", "1080"))
         if not 100 <= meme_output_max_width <= 4000:
@@ -867,6 +889,10 @@ class BotConfig:
             system_prompt=meme_system_prompt,
             max_top_chars=meme_max_top_chars,
             max_bottom_chars=meme_max_bottom_chars,
+            max_top_words=meme_max_top_words,
+            max_bottom_words=meme_max_bottom_words,
+            min_font_size=meme_min_font_size,
+            max_caption_fraction=meme_max_caption_fraction,
             output_max_width=meme_output_max_width,
             jpeg_quality=meme_jpeg_quality,
         )
