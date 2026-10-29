@@ -21,12 +21,14 @@ from bot.commands.meme_logic import (
 from bot.commands.message_utils import reply_in_chunks, reply_with_image
 from bot.commands.tiivista_logic import extract_text_with_ocr, recognize_objects_with_yolo
 from bot.config import BotConfig
+from bot.vision import describe_image_with_eyes
 
 COMMAND_USAGE = (
     "!meme [vihje] - Luo meemi kuvasta. Lähetä kuva captionilla "
     "!meme [vihje] tai vastaa kuvaan komennolla !meme [vihje].\n"
-    "Botti tunnistaa kuvan sisällön (YOLO + OCR) ja keksii siihen "
-    "paikallisella tekoälyllä (Ollama) hauskan ylä- ja alatekstin."
+    "Botti kuvailee kuvan ulkoisella näkömallilla (Eyes), keksii siihen "
+    "paikallisella tekoälyllä (Ollama) hauskan ylä- ja alatekstin "
+    "ja renderöi sen klassiseen meemityyliin alkuperäisen kuvan päälle."
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -91,43 +93,58 @@ def _build_handler(
             )
             return
 
-        # Local perception: YOLO object detection + Tesseract OCR (same stack as !tiivistä).
-        yolo_task = asyncio.to_thread(
-            recognize_objects_with_yolo,
+        # Primary perception: external Eyes VLM description.
+        # Local YOLO + OCR kept only as fallback when Eyes fails.
+        image_description = await describe_image_with_eyes(
             photo_bytes,
-            model_name=config.meme.yolo_model,
-            confidence_threshold=config.meme.yolo_confidence_threshold,
+            config.meme.vision_prompt,
+            base_url=config.eyes.base_url,
+            model=config.eyes.model,
+            max_tokens=config.meme.vision_max_tokens,
+            timeout_seconds=config.eyes.timeout_seconds,
+            max_dimension=config.eyes.max_image_dimension,
+            jpeg_quality=config.eyes.jpeg_quality,
         )
-        if config.meme.ocr_enabled:
-            ocr_task = asyncio.to_thread(
-                extract_text_with_ocr,
+        ocr_text = ""
+
+        if not image_description:
+            LOGGER.warning("!meme: Eyes description empty, using local YOLO/OCR fallback")
+            yolo_task = asyncio.to_thread(
+                recognize_objects_with_yolo,
                 photo_bytes,
-                tesseract_cmd=config.meme.ocr_tesseract_cmd,
-                lang=config.meme.ocr_language,
-                tessdata_dir=config.meme.ocr_tessdata_dir,
-                timeout_seconds=config.meme.ocr_timeout_seconds,
+                model_name=config.meme.yolo_model,
+                confidence_threshold=config.meme.yolo_confidence_threshold,
             )
-            yolo_res, ocr_res = await asyncio.gather(
-                yolo_task, ocr_task, return_exceptions=True
-            )
-        else:
-            try:
-                yolo_res = await yolo_task
-            except Exception as exc:
-                yolo_res = exc
-            ocr_res = ""
+            if config.meme.ocr_enabled:
+                ocr_task = asyncio.to_thread(
+                    extract_text_with_ocr,
+                    photo_bytes,
+                    tesseract_cmd=config.meme.ocr_tesseract_cmd,
+                    lang=config.meme.ocr_language,
+                    tessdata_dir=config.meme.ocr_tessdata_dir,
+                    timeout_seconds=config.meme.ocr_timeout_seconds,
+                )
+                yolo_res, ocr_res = await asyncio.gather(
+                    yolo_task, ocr_task, return_exceptions=True
+                )
+            else:
+                try:
+                    yolo_res = await yolo_task
+                except Exception as exc:
+                    yolo_res = exc
+                ocr_res = ""
 
-        if isinstance(yolo_res, Exception):
-            LOGGER.exception("!meme: YOLO recognition failed", exc_info=yolo_res)
-            image_description = ""
-        else:
-            image_description = yolo_res or ""
+            if isinstance(yolo_res, Exception):
+                LOGGER.exception("!meme: YOLO recognition failed", exc_info=yolo_res)
+                image_description = ""
+            else:
+                image_description = yolo_res or ""
 
-        if isinstance(ocr_res, Exception):
-            LOGGER.exception("!meme: OCR failed", exc_info=ocr_res)
-            ocr_text = ""
-        else:
-            ocr_text = ocr_res or ""
+            if isinstance(ocr_res, Exception):
+                LOGGER.exception("!meme: OCR failed", exc_info=ocr_res)
+                ocr_text = ""
+            else:
+                ocr_text = ocr_res or ""
 
         prompt = build_meme_prompt(
             image_description=image_description,

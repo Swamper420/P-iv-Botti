@@ -47,7 +47,11 @@ def build_meme_prompt(
     ocr_text: str = "",
     user_hint: str = "",
 ) -> str:
-    """Build the Ollama user prompt from local image perception + user hint.
+    """Build the Ollama user prompt from image perception + user hint.
+
+    ``image_description`` is now primarily the external Eyes VLM description
+    (with local YOLO/OCR kept only as fallback), so allow a longer excerpt
+    than the old short YOLO label list.
 
     Returns "" when there is nothing to base a caption on.
     """
@@ -55,7 +59,7 @@ def build_meme_prompt(
 
     desc = (image_description or "").strip()
     if desc and desc != NO_OBJECTS_RECOGNIZED:
-        sections.append(f"Kuvahavainnot: {desc[:500]}")
+        sections.append(f"Kuvahavainnot: {desc[:1500]}")
 
     ocr = (ocr_text or "").strip()
     if ocr:

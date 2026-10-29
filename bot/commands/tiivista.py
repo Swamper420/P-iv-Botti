@@ -23,6 +23,7 @@ from bot.commands.tiivista_logic import (
 )
 from bot.commands.tts_logic import reencode_audio_for_telegram, synthesize_speech
 from bot.config import BotConfig
+from bot.vision import describe_image_with_eyes
 
 LOGGER = logging.getLogger(__name__)
 
@@ -110,49 +111,68 @@ def _build_handler(
                 )
                 return
 
-            yolo_task = asyncio.to_thread(
-                recognize_objects_with_yolo,
+            # Primary perception: external Eyes VLM description.
+            # Local YOLO + OCR kept only as fallback when Eyes fails.
+            image_description = await describe_image_with_eyes(
                 photo_bytes,
-                model_name=config.tiivista.yolo_model,
-                confidence_threshold=config.tiivista.yolo_confidence_threshold,
+                config.tiivista.vision_prompt,
+                base_url=config.eyes.base_url,
+                model=config.eyes.model,
+                max_tokens=config.tiivista.vision_max_tokens,
+                timeout_seconds=config.eyes.timeout_seconds,
+                max_dimension=config.eyes.max_image_dimension,
+                jpeg_quality=config.eyes.jpeg_quality,
             )
-
-            if config.tiivista.ocr_enabled:
-                ocr_task = asyncio.to_thread(
-                    extract_text_with_ocr,
+            ocr_text = ""
+            if image_description:
+                LOGGER.info("!tiivistä: using Eyes VLM description")
+            else:
+                LOGGER.warning(
+                    "!tiivistä: Eyes description empty, using local YOLO/OCR fallback"
+                )
+                yolo_task = asyncio.to_thread(
+                    recognize_objects_with_yolo,
                     photo_bytes,
-                    tesseract_cmd=config.tiivista.ocr_tesseract_cmd,
-                    lang=config.tiivista.ocr_language,
-                    tessdata_dir=config.tiivista.ocr_tessdata_dir,
-                    timeout_seconds=config.tiivista.ocr_timeout_seconds,
+                    model_name=config.tiivista.yolo_model,
+                    confidence_threshold=config.tiivista.yolo_confidence_threshold,
                 )
-                yolo_res, ocr_res = await asyncio.gather(
-                    yolo_task, ocr_task, return_exceptions=True
-                )
-            else:
-                try:
-                    yolo_res = await yolo_task
-                except Exception as exc:
-                    yolo_res = exc
-                ocr_res = ""
 
-            if isinstance(yolo_res, Exception):
-                LOGGER.exception(
-                    "Error performing YOLO object recognition for tiivistä command",
-                    exc_info=yolo_res,
-                )
-                image_description = ""
-            else:
-                image_description = yolo_res or ""
+                if config.tiivista.ocr_enabled:
+                    ocr_task = asyncio.to_thread(
+                        extract_text_with_ocr,
+                        photo_bytes,
+                        tesseract_cmd=config.tiivista.ocr_tesseract_cmd,
+                        lang=config.tiivista.ocr_language,
+                        tessdata_dir=config.tiivista.ocr_tessdata_dir,
+                        timeout_seconds=config.tiivista.ocr_timeout_seconds,
+                    )
+                    yolo_res, ocr_res = await asyncio.gather(
+                        yolo_task, ocr_task, return_exceptions=True
+                    )
+                else:
+                    try:
+                        yolo_res = await yolo_task
+                    except Exception as exc:
+                        yolo_res = exc
+                    ocr_res = ""
 
-            if isinstance(ocr_res, Exception):
-                LOGGER.exception(
-                    "Error performing OCR for tiivistä command",
-                    exc_info=ocr_res,
-                )
-                ocr_text = ""
-            else:
-                ocr_text = ocr_res or ""
+                if isinstance(yolo_res, Exception):
+                    LOGGER.exception(
+                        "Error performing YOLO object recognition for tiivistä command",
+                        exc_info=yolo_res,
+                    )
+                    image_description = ""
+                else:
+                    image_description = yolo_res or ""
+
+                if isinstance(ocr_res, Exception):
+                    LOGGER.exception(
+                        "Error performing OCR for tiivistä command",
+                        exc_info=ocr_res,
+                    )
+                    ocr_text = ""
+                else:
+                    ocr_text = ocr_res or ""
 
             if not image_description and not ocr_text and not raw_text:
                 await reply_in_chunks(

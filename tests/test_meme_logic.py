@@ -242,6 +242,12 @@ class MemeConfigTests(unittest.TestCase):
         self.assertIn("YLÄ", config.meme.system_prompt)
         self.assertEqual(config.meme.output_max_width, 1080)
         self.assertEqual(config.meme.jpeg_quality, 90)
+        self.assertIn("Kuvaile", config.meme.vision_prompt)
+        self.assertEqual(config.meme.vision_max_tokens, 500)
+        self.assertEqual(config.eyes.base_url, "https://eyes.tsih.fi/v1")
+        self.assertEqual(config.eyes.model, "eyes-gemma-4-12b-q4")
+        self.assertEqual(config.eyes.timeout_seconds, 60)
+        self.assertEqual(config.eyes.max_tokens, 500)
 
     def test_custom_values_from_environment(self) -> None:
         env = {
@@ -266,19 +272,27 @@ class MemeConfigTests(unittest.TestCase):
         self.assertEqual(config.meme.jpeg_quality, 80)
 
     def test_invalid_values_raise(self) -> None:
-        invalid = {
-            "MEME_MAX_IMAGE_BYTES": "0",
-            "MEME_YOLO_CONFIDENCE_THRESHOLD": "1.5",
-            "MEME_OCR_TIMEOUT_SECONDS": "0",
-            "MEME_CAPTION_NUM_PREDICT": "0",
-            "MEME_SYSTEM_PROMPT": "   ",
-            "MEME_MAX_TOP_CHARS": "0",
-            "MEME_MAX_BOTTOM_CHARS": "0",
-            "MEME_OUTPUT_MAX_WIDTH": "50",
-            "MEME_JPEG_QUALITY": "101",
-        }
-        for key, value in invalid.items():
-            with self.subTest(key=key):
+        invalid = [
+            ("MEME_MAX_IMAGE_BYTES", "0"),
+            ("MEME_YOLO_CONFIDENCE_THRESHOLD", "1.5"),
+            ("MEME_OCR_TIMEOUT_SECONDS", "0"),
+            ("MEME_CAPTION_NUM_PREDICT", "0"),
+            ("MEME_SYSTEM_PROMPT", "   "),
+            ("MEME_VISION_PROMPT", "   "),
+            ("MEME_VISION_MAX_TOKENS", "0"),
+            ("MEME_VISION_MAX_TOKENS", "5000"),
+            ("MEME_MAX_TOP_CHARS", "0"),
+            ("MEME_MAX_BOTTOM_CHARS", "0"),
+            ("MEME_OUTPUT_MAX_WIDTH", "50"),
+            ("MEME_JPEG_QUALITY", "101"),
+            ("EYES_TIMEOUT_SECONDS", "0"),
+            ("EYES_MAX_TOKENS", "0"),
+            ("EYES_MAX_TOKENS", "5000"),
+            ("EYES_MAX_IMAGE_DIMENSION", "50"),
+            ("EYES_JPEG_QUALITY", "101"),
+        ]
+        for key, value in invalid:
+            with self.subTest(key=key, value=value):
                 with patch.dict(
                     os.environ,
                     {"TELEGRAM_BOT_TOKEN": "token", key: value},

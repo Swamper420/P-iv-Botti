@@ -39,6 +39,8 @@ When extending this project:
 - Shared command utilities in `bot/commands/`:
   - `common.py`: `@command_handler` decorator for chat tracking and error handling
   - `message_utils.py`: `split_message(...)`, `reply_in_chunks(...)`, `reply_with_image(...)`, and `reply_with_card(...)` (with automatic fallback to text on upload error)
+- Shared vision client in `bot/vision.py`:
+  - `prepare_image_data_url(...)` (downscale + JPEG + base64 data URL) and `describe_image_with_eyes(...)` (OpenAI-compatible `/v1/chat/completions` client for Eyes, returns "" on failure)
 - Picture rendering system in `bot/rendering/`:
   - `engine.py`: PIL-based card renderer (`render_card`, `render_text_card`, `render_table_card`) with dynamic height sizing and system font resolution
   - `models.py`: `Card`, `Badge`, `BadgeColor`, `Theme`, `DARK_THEME`, and element models (`TextElement`, `KeyValuesElement`, `TableElement`, `DividerElement`, `ProgressBarElement`, `CodeBlockElement`, `ImageElement` with `Card.add_image(...)` for aspect-fit photos with sharp borders, `ImageGridElement` with `Card.add_image_grid(...)` for up to 2x2 labeled photo grids)
@@ -52,7 +54,7 @@ When extending this project:
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig`, `MemeConfig`, `CraftyConfig`, `MumbleConfig`, `RenderingConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `EyesConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig` with `vision_prompt`/`vision_max_tokens`, `MemeConfig` with `vision_prompt`/`vision_max_tokens`, `CraftyConfig`, `MumbleConfig`, `RenderingConfig`).
 
 - Active chat persistence is handled in `bot/active_chats.py` under `storage/active_chat_ids.json`.
 - Targeted tests: `python -m unittest tests.test_weather_logic` (replace module with the area you changed).

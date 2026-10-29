@@ -1,4 +1,5 @@
 from io import BytesIO
+import os
 import subprocess
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -305,6 +306,58 @@ class TiivistaLogicTests(unittest.IsolatedAsyncioTestCase):
             ocr_text="",
         )
         self.assertEqual(formatted, "Kuvasta tunnistettiin: 1 auto.")
+
+    def test_format_image_analysis_text_vision_description(self) -> None:
+        formatted = format_image_analysis_text(
+            image_description="Kuvassa on kissa pöydällä kahvikupin vieressä.",
+            ocr_text="",
+            additional_text="",
+        )
+        self.assertIn("Kuvassa on kissa", formatted)
+
+
+class TiivistaVisionConfigTests(unittest.TestCase):
+    def test_defaults(self) -> None:
+        from bot.config import BotConfig
+
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+        self.assertIn("Kuvaile", config.tiivista.vision_prompt)
+        self.assertEqual(config.tiivista.vision_max_tokens, 800)
+
+    def test_custom_values_from_environment(self) -> None:
+        from bot.config import BotConfig
+
+        env = {
+            "TELEGRAM_BOT_TOKEN": "token",
+            "TIIVISTA_VISION_PROMPT": "Custom vision prompt",
+            "TIIVISTA_VISION_MAX_TOKENS": "1000",
+        }
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+        self.assertEqual(config.tiivista.vision_prompt, "Custom vision prompt")
+        self.assertEqual(config.tiivista.vision_max_tokens, 1000)
+
+    def test_invalid_values_raise(self) -> None:
+        from bot.config import BotConfig
+
+        invalid = [
+            ("TIIVISTA_VISION_PROMPT", "   "),
+            ("TIIVISTA_VISION_MAX_TOKENS", "0"),
+            ("TIIVISTA_VISION_MAX_TOKENS", "5000"),
+        ]
+        for key, value in invalid:
+            with self.subTest(key=key, value=value):
+                with patch.dict(
+                    os.environ,
+                    {"TELEGRAM_BOT_TOKEN": "token", key: value},
+                    clear=False,
+                ):
+                    with self.assertRaises(ValueError):
+                        BotConfig.from_environment()
 
 
 if __name__ == "__main__":

@@ -48,6 +48,16 @@ class NaamaConfig:
 
 
 @dataclass(frozen=True)
+class EyesConfig:
+    base_url: str = "https://eyes.tsih.fi/v1"
+    model: str = "eyes-gemma-4-12b-q4"
+    timeout_seconds: int = 60
+    max_tokens: int = 500
+    max_image_dimension: int = 1024
+    jpeg_quality: int = 85
+
+
+@dataclass(frozen=True)
 class OllamaConfig:
     base_url: str = "http://localhost:11434"
     model: str = "gemma3"
@@ -151,6 +161,13 @@ class TiivistaConfig:
     ocr_tesseract_cmd: str = "tesseract"
     ocr_tessdata_dir: str = ""
     ocr_timeout_seconds: int = 30
+    vision_prompt: str = (
+        "Kuvaile kuva yksityiskohtaisesti suomeksi tiivistelmää varten. "
+        "Kerro ihmiset, eläimet, esineet, toiminta, ympäristö "
+        "ja mahdollinen kuvassa näkyvä teksti sanatarkasti. "
+        "Vastaa tiiviisti, enintään muutamalla virkkeellä."
+    )
+    vision_max_tokens: int = 800
 
 
 @dataclass(frozen=True)
@@ -163,6 +180,13 @@ class MemeConfig:
     ocr_tesseract_cmd: str = "tesseract"
     ocr_tessdata_dir: str = ""
     ocr_timeout_seconds: int = 30
+    vision_prompt: str = (
+        "Kuvaile kuva yksityiskohtaisesti suomeksi meemiä varten. "
+        "Kerro ihmiset, eläimet, esineet, toiminta, ilmeet, ympäristö "
+        "ja mahdollinen kuvassa näkyvä teksti sanatarkasti. "
+        "Vastaa tiiviisti, enintään muutamalla virkkeellä."
+    )
+    vision_max_tokens: int = 500
     caption_num_predict: int = 120
     system_prompt: str = (
         "Keksi kuvaan hauska suomenkielinen meemiteksti. "
@@ -227,6 +251,7 @@ class BotConfig:
     cs2_rss: Cs2RssConfig
     naama: NaamaConfig
     ollama: OllamaConfig = OllamaConfig()
+    eyes: EyesConfig = EyesConfig()
     twitch: TwitchConfig = TwitchConfig()
     paranna: ParannaConfig = ParannaConfig()
     tts: TtsConfig = TtsConfig()
@@ -515,6 +540,27 @@ class BotConfig:
             system_prompt=ollama_system_prompt,
         )
 
+        eyes_timeout_seconds = int(os.getenv("EYES_TIMEOUT_SECONDS", "60"))
+        if eyes_timeout_seconds < 1:
+            raise ValueError("EYES_TIMEOUT_SECONDS must be >= 1")
+        eyes_max_tokens = int(os.getenv("EYES_MAX_TOKENS", "500"))
+        if not 1 <= eyes_max_tokens <= 4096:
+            raise ValueError("EYES_MAX_TOKENS must be between 1 and 4096")
+        eyes_max_image_dimension = int(os.getenv("EYES_MAX_IMAGE_DIMENSION", "1024"))
+        if not 100 <= eyes_max_image_dimension <= 4000:
+            raise ValueError("EYES_MAX_IMAGE_DIMENSION must be between 100 and 4000")
+        eyes_jpeg_quality = int(os.getenv("EYES_JPEG_QUALITY", "85"))
+        if not 1 <= eyes_jpeg_quality <= 100:
+            raise ValueError("EYES_JPEG_QUALITY must be between 1 and 100")
+        eyes_config = EyesConfig(
+            base_url=os.getenv("EYES_BASE_URL", "https://eyes.tsih.fi/v1").strip(),
+            model=os.getenv("EYES_MODEL", "eyes-gemma-4-12b-q4").strip(),
+            timeout_seconds=eyes_timeout_seconds,
+            max_tokens=eyes_max_tokens,
+            max_image_dimension=eyes_max_image_dimension,
+            jpeg_quality=eyes_jpeg_quality,
+        )
+
         raw_channels = os.getenv("TWITCH_CHANNELS", "").strip()
         twitch_channels = tuple(
             c.strip().lower() for c in raw_channels.split(",") if c.strip()
@@ -692,6 +738,19 @@ class BotConfig:
         if tiivista_ocr_timeout_seconds < 1:
             raise ValueError("TIIVISTA_OCR_TIMEOUT_SECONDS must be >= 1")
 
+        default_tiivista_vision_prompt = TiivistaConfig.vision_prompt
+        tiivista_vision_prompt = os.getenv(
+            "TIIVISTA_VISION_PROMPT", default_tiivista_vision_prompt
+        ).strip()
+        if not tiivista_vision_prompt:
+            raise ValueError("TIIVISTA_VISION_PROMPT must not be empty")
+
+        tiivista_vision_max_tokens = int(
+            os.getenv("TIIVISTA_VISION_MAX_TOKENS", "800")
+        )
+        if not 1 <= tiivista_vision_max_tokens <= 4096:
+            raise ValueError("TIIVISTA_VISION_MAX_TOKENS must be between 1 and 4096")
+
         default_tiivista_prompt = (
             "Tiivistä annettu teksti tiiviiksi, selkeäksi ja sujuvaksi suomenkieliseksi "
             "yhteenvedoksi. Vastaa pelkällä tiivistelmällä ilman alustuksia, sillä se luetaan ääneen."
@@ -717,6 +776,8 @@ class BotConfig:
             ocr_tesseract_cmd=tiivista_ocr_tesseract_cmd,
             ocr_tessdata_dir=tiivista_ocr_tessdata_dir,
             ocr_timeout_seconds=tiivista_ocr_timeout_seconds,
+            vision_prompt=tiivista_vision_prompt,
+            vision_max_tokens=tiivista_vision_max_tokens,
         )
 
         meme_max_image_bytes = int(
@@ -764,6 +825,17 @@ class BotConfig:
         if not meme_system_prompt:
             raise ValueError("MEME_SYSTEM_PROMPT must not be empty")
 
+        default_meme_vision_prompt = MemeConfig.vision_prompt
+        meme_vision_prompt = os.getenv(
+            "MEME_VISION_PROMPT", default_meme_vision_prompt
+        ).strip()
+        if not meme_vision_prompt:
+            raise ValueError("MEME_VISION_PROMPT must not be empty")
+
+        meme_vision_max_tokens = int(os.getenv("MEME_VISION_MAX_TOKENS", "500"))
+        if not 1 <= meme_vision_max_tokens <= 4096:
+            raise ValueError("MEME_VISION_MAX_TOKENS must be between 1 and 4096")
+
         meme_max_top_chars = int(os.getenv("MEME_MAX_TOP_CHARS", "60"))
         if meme_max_top_chars < 1:
             raise ValueError("MEME_MAX_TOP_CHARS must be >= 1")
@@ -789,6 +861,8 @@ class BotConfig:
             ocr_tesseract_cmd=meme_ocr_tesseract_cmd,
             ocr_tessdata_dir=meme_ocr_tessdata_dir,
             ocr_timeout_seconds=meme_ocr_timeout_seconds,
+            vision_prompt=meme_vision_prompt,
+            vision_max_tokens=meme_vision_max_tokens,
             caption_num_predict=meme_caption_num_predict,
             system_prompt=meme_system_prompt,
             max_top_chars=meme_max_top_chars,
@@ -868,6 +942,7 @@ class BotConfig:
             cs2_rss=cs2_rss_config,
             naama=naama_config,
             ollama=ollama_config,
+            eyes=eyes_config,
             twitch=twitch_config,
             paranna=paranna_config,
             tts=tts_config,
