@@ -14,7 +14,7 @@ import httpx
 import numpy as np
 from PIL import Image, ImageOps
 
-from bot.commands.aih_logic import stream_ollama_completion
+from bot.commands.aih_logic import stream_ollama_completion, strip_think_blocks
 
 LOGGER = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def summarize_text_with_ollama(
     ):
         chunks.append(chunk)
 
-    return "".join(chunks).strip()
+    return strip_think_blocks("".join(chunks)).strip()
 
 
 def create_3_word_caption(summary_text: str, max_words: int = 3) -> str:

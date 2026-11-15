@@ -6,7 +6,11 @@ from collections.abc import Awaitable, Callable
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from bot.commands.aih_logic import parse_aih_command, stream_ollama_completion
+from bot.commands.aih_logic import (
+    parse_aih_command,
+    stream_ollama_completion,
+    strip_think_blocks,
+)
 from bot.commands.common import command_handler
 from bot.commands.message_utils import split_message
 from bot.config import BotConfig
@@ -69,6 +73,7 @@ def _build_handler(
                         last_edit_time = now
 
             # Stream finished - render final complete response
+            accumulated_text = strip_think_blocks(accumulated_text)
             if not accumulated_text.strip():
                 await placeholder.edit_text("Ollama ei palauttanut vastausta.")
                 return

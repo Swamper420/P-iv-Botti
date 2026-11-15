@@ -8,7 +8,7 @@ from telegram import PhotoSize, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from bot.commands.aih_logic import stream_ollama_completion
+from bot.commands.aih_logic import stream_ollama_completion, strip_think_blocks
 from bot.commands.common import command_handler
 from bot.commands.meme_logic import (
     build_meme_prompt,
@@ -202,7 +202,7 @@ def _build_handler(
                     system_prompt=config.meme.system_prompt,
                 ):
                     chunks.append(chunk)
-                raw_caption = "".join(chunks).strip()
+                raw_caption = strip_think_blocks("".join(chunks)).strip()
             except Exception:
                 LOGGER.exception("!meme: Ollama caption generation failed")
 
