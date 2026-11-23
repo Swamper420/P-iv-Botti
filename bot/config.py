@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _load_env_file(env_path: Path) -> None:
@@ -261,6 +264,17 @@ class RenderingConfig:
 
 
 @dataclass(frozen=True)
+class MaratonConfig:
+    enabled: bool = True
+    event_date: str = "2027-09-05"
+    send_time: str = "09:00"
+    timezone: str = "Europe/Helsinki"
+    check_interval_seconds: int = 60
+    chat_ids: tuple[int, ...] = ()
+    use_card: bool = True
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -281,6 +295,7 @@ class BotConfig:
     crafty: CraftyConfig = CraftyConfig()
     mumble: MumbleConfig = MumbleConfig()
     rendering: RenderingConfig = RenderingConfig()
+    maraton: MaratonConfig = MaratonConfig()
 
 
 
@@ -990,6 +1005,65 @@ class BotConfig:
             font_family=os.getenv("RENDER_FONT_FAMILY", "auto").strip() or "auto",
         )
 
+        maraton_enabled = (
+            os.getenv("MARATON_ENABLED", "true").strip().lower() == "true"
+        )
+        maraton_event_date = os.getenv("MARATON_EVENT_DATE", "2027-09-05").strip()
+        try:
+            date.fromisoformat(maraton_event_date)
+        except ValueError as exc:
+            raise ValueError(
+                "MARATON_EVENT_DATE must be a valid YYYY-MM-DD date"
+            ) from exc
+
+        maraton_send_time = os.getenv("MARATON_SEND_TIME", "09:00").strip()
+        send_time_match = re.match(r"^(\d{2}):(\d{2})$", maraton_send_time)
+        if not send_time_match:
+            raise ValueError("MARATON_SEND_TIME must be in HH:MM format (00:00-23:59)")
+        send_hour, send_minute = map(int, send_time_match.groups())
+        if not (0 <= send_hour <= 23 and 0 <= send_minute <= 59):
+            raise ValueError("MARATON_SEND_TIME must be in HH:MM format (00:00-23:59)")
+
+        maraton_timezone = os.getenv("MARATON_TIMEZONE", "Europe/Helsinki").strip()
+        try:
+            ZoneInfo(maraton_timezone)
+        except (ZoneInfoNotFoundError, KeyError, ValueError) as exc:
+            raise ValueError("MARATON_TIMEZONE must be a valid IANA timezone") from exc
+
+        maraton_check_interval_seconds = int(
+            os.getenv("MARATON_CHECK_INTERVAL_SECONDS", "60")
+        )
+        if maraton_check_interval_seconds < 1:
+            raise ValueError("MARATON_CHECK_INTERVAL_SECONDS must be >= 1")
+
+        raw_maraton_chat_ids = os.getenv("MARATON_CHAT_IDS", "").strip()
+        maraton_chat_ids_list: list[int] = []
+        if raw_maraton_chat_ids:
+            for item in raw_maraton_chat_ids.split(","):
+                token = item.strip()
+                if not token:
+                    continue
+                try:
+                    maraton_chat_ids_list.append(int(token))
+                except ValueError as exc:
+                    raise ValueError(
+                        "MARATON_CHAT_IDS must be a comma-separated list of integer chat IDs"
+                    ) from exc
+
+        maraton_use_card = (
+            os.getenv("MARATON_USE_CARD", "true").strip().lower() == "true"
+        )
+
+        maraton_config = MaratonConfig(
+            enabled=maraton_enabled,
+            event_date=maraton_event_date,
+            send_time=maraton_send_time,
+            timezone=maraton_timezone,
+            check_interval_seconds=maraton_check_interval_seconds,
+            chat_ids=tuple(maraton_chat_ids_list),
+            use_card=maraton_use_card,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -1010,6 +1084,7 @@ class BotConfig:
             crafty=crafty_config,
             mumble=mumble_config,
             rendering=rendering_config,
+            maraton=maraton_config,
         )
 
 

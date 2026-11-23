@@ -249,6 +249,59 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     BotConfig.from_environment()
 
+    def test_maraton_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertTrue(config.maraton.enabled)
+        self.assertEqual(config.maraton.event_date, "2027-09-05")
+        self.assertEqual(config.maraton.send_time, "09:00")
+        self.assertEqual(config.maraton.timezone, "Europe/Helsinki")
+        self.assertEqual(config.maraton.check_interval_seconds, 60)
+        self.assertEqual(config.maraton.chat_ids, ())
+        self.assertTrue(config.maraton.use_card)
+
+    def test_maraton_custom_config(self) -> None:
+        env = {
+            "TELEGRAM_BOT_TOKEN": "token",
+            "MARATON_ENABLED": "false",
+            "MARATON_EVENT_DATE": "2027-09-12",
+            "MARATON_SEND_TIME": "07:30",
+            "MARATON_TIMEZONE": "UTC",
+            "MARATON_CHECK_INTERVAL_SECONDS": "120",
+            "MARATON_CHAT_IDS": "-100123456, 42",
+            "MARATON_USE_CARD": "false",
+        }
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertFalse(config.maraton.enabled)
+        self.assertEqual(config.maraton.event_date, "2027-09-12")
+        self.assertEqual(config.maraton.send_time, "07:30")
+        self.assertEqual(config.maraton.timezone, "UTC")
+        self.assertEqual(config.maraton.check_interval_seconds, 120)
+        self.assertEqual(config.maraton.chat_ids, (-100123456, 42))
+        self.assertFalse(config.maraton.use_card)
+
+    def test_invalid_maraton_config_raises_error(self) -> None:
+        invalid_cases = [
+            {"MARATON_EVENT_DATE": "05.09.2027"},
+            {"MARATON_SEND_TIME": "25:00"},
+            {"MARATON_SEND_TIME": "9:00"},
+            {"MARATON_TIMEZONE": "Invalid/Zone_Name"},
+            {"MARATON_CHECK_INTERVAL_SECONDS": "0"},
+            {"MARATON_CHAT_IDS": "123,not_an_int"},
+        ]
+        for extra_env in invalid_cases:
+            env = {"TELEGRAM_BOT_TOKEN": "token", **extra_env}
+            with patch("bot.config._load_env_file"):
+                with patch.dict(os.environ, env, clear=True):
+                    with self.assertRaises(ValueError, msg=f"Expected ValueError for {extra_env}"):
+                        BotConfig.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()
