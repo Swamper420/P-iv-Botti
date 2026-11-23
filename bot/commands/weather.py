@@ -21,6 +21,7 @@ from bot.commands.weather_logic import (
     parse_weather_camera_location,
 )
 from bot.config import BotConfig
+from bot.rendering import theme_from_config
 
 COMMAND_USAGE = "!sääkuva <kaupunki> [kulma]"
 
@@ -88,6 +89,7 @@ def _build_handler(
                 await reply_with_card(
                     update,
                     card=error_card,
+                    theme=theme_from_config(config.rendering),
                     fallback_text=f"⚠️ {error_text}",
                     filename=_safe_filename(cam_result.camera_id, query_for_text),
                     max_reply_length=config.max_reply_length,
@@ -126,6 +128,7 @@ def _build_handler(
             await reply_with_card(
                 update,
                 card=card,
+                theme=theme_from_config(config.rendering),
                 fallback_text=fallback_text,
                 filename=_safe_filename(cam_result.camera_id, query_for_text),
                 max_reply_length=config.max_reply_length,

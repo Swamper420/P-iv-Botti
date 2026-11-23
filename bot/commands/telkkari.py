@@ -17,6 +17,7 @@ from bot.commands.telkkari_logic import (
     get_next_hour_schedule_card,
 )
 from bot.config import BotConfig
+from bot.rendering import theme_from_config
 
 COMMAND_USAGE = "!telkkari | !telkkari <kanavanumero>"
 
@@ -99,6 +100,7 @@ def _build_handler(
             await reply_with_card(
                 update,
                 card=card,
+                theme=theme_from_config(config.rendering),
                 fallback_text=reply_text,
                 filename="telkkari.png",
                 max_reply_length=config.max_reply_length,

@@ -11,6 +11,7 @@ from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks, reply_with_card
 from bot.commands.mine_logic import handle_mine_card_command, parse_mine_command
 from bot.config import BotConfig
+from bot.rendering import theme_from_config
 
 COMMAND_USAGE = "!mine | !mine <palvelin> | !mine allowlist [palvelin] | !mine allowlist add [palvelin] <pelaaja> | !mine stats [palvelin] [pelaaja]"
 
@@ -43,6 +44,7 @@ def _build_handler(
             await reply_with_card(
                 update,
                 card=card,
+                theme=theme_from_config(config.rendering),
                 fallback_text=reply_text,
                 filename="mine.png",
                 max_reply_length=config.max_reply_length,

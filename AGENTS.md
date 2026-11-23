@@ -43,8 +43,9 @@ When extending this project:
 - Shared vision client in `bot/vision.py`:
   - `prepare_image_data_url(...)` (downscale + JPEG + base64 data URL) and `describe_image_with_eyes(...)` (OpenAI-compatible `/v1/chat/completions` client for Eyes, returns "" on failure)
 - Picture rendering system in `bot/rendering/`:
-  - `engine.py`: PIL-based card renderer (`render_card`, `render_text_card`, `render_table_card`) with dynamic height sizing and system font resolution
-  - `models.py`: `Card`, `Badge`, `BadgeColor`, `Theme`, `DARK_THEME`, and element models (`TextElement`, `KeyValuesElement`, `TableElement`, `DividerElement`, `ProgressBarElement`, `CodeBlockElement`, `ImageElement` with `Card.add_image(...)` for aspect-fit photos with sharp borders, `ImageGridElement` with `Card.add_image_grid(...)` for up to 2x2 labeled photo grids)
+  - `engine.py`: PIL-based dark HUD card renderer (`render_card`, `render_text_card`, `render_table_card`) with exact ink-bbox typography, dynamic height sizing, and system font resolution
+  - `icons.py`: Crisp sharp-edged geometric vector icons (`draw_icon`, `weather_icon_name`) and PIL emoji/tofu sanitizer (`sanitize_for_pil`)
+  - `models.py`: `Card`, `Badge`, `BadgeColor`, `Theme`, `DARK_THEME`, `theme_from_config(...)`, and element models (`TextElement`, `KeyValuesElement`, `TableElement` with `Badge` cells & `mono_cols`, `DividerElement`, `ProgressBarElement`, `CodeBlockElement`, `ImageElement`, `ImageGridElement`, `SectionHeaderElement`, `HeroElement`, `StatGridElement` / `StatTile`, `TimelineElement` / `TimelineItem`, `BarListElement` / `BarItem`, `RangeBarElement`, `CalloutElement`)
 - Command modules are auto-discovered in `bot/commands/__init__.py` (files ending in `_logic.py` are excluded from registration).
 - Background tasks are modularized in `bot/tasks/`:
   - `cs2_rss.py`: `Cs2RssNotifier` for background RSS polling

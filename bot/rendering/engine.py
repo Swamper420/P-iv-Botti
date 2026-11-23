@@ -7,48 +7,96 @@ from typing import Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
+from bot.rendering.icons import draw_icon, sanitize_for_pil
 from bot.rendering.models import (
     DARK_THEME,
     Badge,
+    BarListElement,
+    CalloutElement,
     Card,
     CardElement,
     CodeBlockElement,
     DividerElement,
+    HeroElement,
     ImageElement,
     ImageGridElement,
     KeyValuesElement,
     ProgressBarElement,
+    RangeBarElement,
+    SectionHeaderElement,
+    StatGridElement,
     TableElement,
     TextElement,
     Theme,
+    TimelineElement,
 )
 
-# Common TTF search candidates on Linux and other platforms
-SANS_REGULAR_CANDIDATES = [
+# Common TTF/OTF search candidates on Linux and other platforms
+DISPLAY_CANDIDATES = (
+    "/usr/share/fonts/gsfonts/NimbusSansNarrow-Bold.otf",
+    "/usr/share/fonts/gsfonts/NimbusSans-Bold.otf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+)
+
+SANS_REGULAR_CANDIDATES = (
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
-]
+)
 
-SANS_BOLD_CANDIDATES = [
+SANS_BOLD_CANDIDATES = (
     "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/noto/NotoSans-Bold.ttf",
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/Adwaita/AdwaitaSans-Bold.ttf",
-]
+    "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+)
 
-MONO_CANDIDATES = [
-    "/usr/share/fonts/TTF/Hack-Regular.ttf",
+MONO_CANDIDATES = (
     "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+    "/usr/share/fonts/TTF/Hack-Regular.ttf",
     "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf",
-]
+)
+
+MONO_BOLD_CANDIDATES = (
+    "/usr/share/fonts/liberation/LiberationMono-Bold.ttf",
+    "/usr/share/fonts/TTF/Hack-Bold.ttf",
+    "/usr/share/fonts/Adwaita/AdwaitaMono-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf",
+)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    cleaned = str(hex_color or "").strip().lstrip("#")
+    if len(cleaned) == 3:
+        cleaned = "".join(ch * 2 for ch in cleaned)
+    if len(cleaned) != 6:
+        return (56, 189, 248)
+    try:
+        return (int(cleaned[0:2], 16), int(cleaned[2:4], 16), int(cleaned[4:6], 16))
+    except ValueError:
+        return (56, 189, 248)
+
+
+def _blend_hex(base_hex: str, overlay_hex: str, alpha: float) -> str:
+    a = max(0.0, min(1.0, alpha))
+    b = _hex_to_rgb(base_hex)
+    o = _hex_to_rgb(overlay_hex)
+    r = int(b[0] * (1.0 - a) + o[0] * a)
+    g = int(b[1] * (1.0 - a) + o[1] * a)
+    bl = int(b[2] * (1.0 - a) + o[2] * a)
+    return f"#{r:02x}{g:02x}{bl:02x}"
 
 
 @functools.lru_cache(maxsize=32)
@@ -59,35 +107,42 @@ def _find_font_path(candidates: tuple[str, ...]) -> str | None:
     return None
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=96)
 def _load_font(font_type: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    path: str | None = None
-    if font_type == "bold":
-        path = _find_font_path(tuple(SANS_BOLD_CANDIDATES))
-    elif font_type == "mono":
-        path = _find_font_path(tuple(MONO_CANDIDATES))
-    else:
-        path = _find_font_path(tuple(SANS_REGULAR_CANDIDATES))
-
+    candidates_map = {
+        "display": DISPLAY_CANDIDATES,
+        "bold": SANS_BOLD_CANDIDATES,
+        "mono": MONO_CANDIDATES,
+        "mono_bold": MONO_BOLD_CANDIDATES,
+        "regular": SANS_REGULAR_CANDIDATES,
+    }
+    path = _find_font_path(candidates_map.get(font_type, SANS_REGULAR_CANDIDATES))
     if path:
         try:
-            return ImageFont.truetype(path, size)
+            f = ImageFont.truetype(path, size)
+            if font_type in ("display", "bold") and "AdwaitaSans-Regular" in path:
+                try:
+                    f.set_variation_by_name("Black" if font_type == "display" else "Bold")
+                except Exception:
+                    pass
+            return f
         except Exception:
             pass
-
     return ImageFont.load_default()
 
 
 def _get_text_bbox(
     draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont
 ) -> tuple[int, int, int, int]:
-    return draw.textbbox((0, 0), text, font=font)
+    return draw.textbbox((0, 0), text or " ", font=font)
 
 
 def _get_text_width(
     draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont
 ) -> int:
-    bbox = _get_text_bbox(draw, text, font)
+    if not text:
+        return 0
+    bbox = draw.textbbox((0, 0), text, font=font)
     return bbox[2] - bbox[0]
 
 
@@ -98,14 +153,61 @@ def _get_text_height(
     return bbox[3] - bbox[1]
 
 
+def _line_advance(
+    draw: ImageDraw.ImageDraw,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    extra: int = 5,
+) -> int:
+    bbox = draw.textbbox((0, 0), "Äg", font=font)
+    return max((bbox[3] - bbox[1]) + extra, 14)
+
+
+def _draw_text_ink(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: str,
+) -> tuple[int, int]:
+    """Draw text with top-left ink edge anchored exactly at (x, y)."""
+    if not text:
+        return 0, 0
+    bbox = draw.textbbox((0, 0), text, font=font)
+    draw.text((x - bbox[0], y - bbox[1]), text, fill=fill, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _draw_text_vcenter(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    box_y: int,
+    box_h: int,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: str,
+) -> tuple[int, int]:
+    """Draw text vertically centered by ink bounding box inside [box_y, box_y + box_h]."""
+    if not text:
+        return 0, 0
+    bbox = draw.textbbox((0, 0), text, font=font)
+    ink_h = bbox[3] - bbox[1]
+    y = box_y + (box_h - ink_h) // 2
+    draw.text((x - bbox[0], y - bbox[1]), text, fill=fill, font=font)
+    return bbox[2] - bbox[0], ink_h
+
+
 def _wrap_text(
     draw: ImageDraw.ImageDraw,
     text: str,
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
     max_width: int,
 ) -> list[str]:
+    clean = sanitize_for_pil(text)
+    if max_width <= 8:
+        return clean.splitlines() or [""]
     lines: list[str] = []
-    for raw_line in text.splitlines():
+    for raw_line in clean.splitlines():
         if not raw_line:
             lines.append("")
             continue
@@ -122,20 +224,20 @@ def _wrap_text(
                     lines.append(current_line)
                     current_line = word
                 else:
-                    # Single word exceeds max width, split characters
                     chunk = ""
                     for char in word:
                         if _get_text_width(draw, chunk + char, font) <= max_width:
                             chunk += char
                         else:
-                            lines.append(chunk)
+                            if chunk:
+                                lines.append(chunk)
                             chunk = char
                     current_line = chunk
 
         if current_line:
             lines.append(current_line)
 
-    return lines
+    return lines or [""]
 
 
 def _fit_text(
@@ -146,43 +248,43 @@ def _fit_text(
     overflow: str = "ellipsis",
 ) -> str:
     """Ensure text fits within max_width using specified overflow strategy ('ellipsis', 'clip', 'none')."""
+    clean = sanitize_for_pil(text)
     if max_width <= 0:
         return ""
-    if _get_text_width(draw, text, font) <= max_width:
-        return text
+    if _get_text_width(draw, clean, font) <= max_width:
+        return clean
 
     if overflow == "none":
-        return text
+        return clean
 
     if overflow == "clip":
-        lo, hi = 0, len(text)
+        lo, hi = 0, len(clean)
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            if _get_text_width(draw, text[:mid], font) <= max_width:
+            if _get_text_width(draw, clean[:mid], font) <= max_width:
                 lo = mid
             else:
                 hi = mid - 1
-        return text[:lo]
+        return clean[:lo]
 
-    # Default: "ellipsis"
-    ellipsis = "..."
+    ellipsis = "…"
     ell_w = _get_text_width(draw, ellipsis, font)
     if ell_w > max_width:
-        ellipsis = "…"
+        ellipsis = "."
         ell_w = _get_text_width(draw, ellipsis, font)
         if ell_w > max_width:
             return ""
 
     avail_w = max_width - ell_w
-    lo, hi = 0, len(text)
+    lo, hi = 0, len(clean)
     while lo < hi:
         mid = (lo + hi + 1) // 2
-        if _get_text_width(draw, text[:mid], font) <= avail_w:
+        if _get_text_width(draw, clean[:mid], font) <= avail_w:
             lo = mid
         else:
             hi = mid - 1
 
-    return text[:lo].rstrip() + ellipsis
+    return clean[:lo].rstrip() + ellipsis
 
 
 def _calculate_col_widths(
@@ -205,10 +307,10 @@ def _calculate_col_widths(
     if total_spec <= 0:
         return _calculate_col_widths(content_width, cols, None)
 
-    widths = [int(content_width * (w / total_spec)) for w in col_widths]
-    remainder = content_width - sum(widths)
-    for i in range(remainder):
-        widths[i % cols] += 1
+    widths = [max(24, int(content_width * (w / total_spec))) for w in col_widths]
+    diff = content_width - sum(widths)
+    if diff != 0:
+        widths[-1] = max(24, widths[-1] + diff)
     return widths
 
 
@@ -217,12 +319,12 @@ def _measure_badge(
     badge: Badge,
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
 ) -> tuple[int, int]:
-    text = badge.text.strip().upper()
-    pad_h = 8
-    pad_v = 3
+    text = sanitize_for_pil(badge.text).strip().upper()
+    pad_h = 9
+    pad_v = 5
     text_w = _get_text_width(draw, text, font)
-    text_h = _get_text_height(draw, text, font)
-    return text_w + pad_h * 2, text_h + pad_v * 2
+    ref_h = _get_text_height(draw, "ÄG", font)
+    return text_w + pad_h * 2, ref_h + pad_v * 2
 
 
 def _draw_sharp_badge(
@@ -234,15 +336,9 @@ def _draw_sharp_badge(
 ) -> tuple[int, int]:
     """Draws a badge with sharp rectangular corners and returns its (width, height)."""
     style = badge.get_style()
-    text = badge.text.strip().upper()
-    pad_h = 8
-    pad_v = 3
-
-    text_w = _get_text_width(draw, text, font)
-    text_h = _get_text_height(draw, text, font)
-
-    badge_w = text_w + pad_h * 2
-    badge_h = text_h + pad_v * 2
+    text = sanitize_for_pil(badge.text).strip().upper()
+    pad_h = 9
+    badge_w, badge_h = _measure_badge(draw, badge, font)
 
     # Draw sharp rectangle background and border (NO rounded corners)
     draw.rectangle(
@@ -251,8 +347,7 @@ def _draw_sharp_badge(
         outline=style.border_color,
         width=1,
     )
-    draw.text((x + pad_h, y + pad_v), text, fill=style.fg_color, font=font)
-
+    _draw_text_vcenter(draw, x + pad_h, y, badge_h, text, font, style.fg_color)
     return badge_w, badge_h
 
 
@@ -276,12 +371,7 @@ def _compute_image_display_size(
     content_width: int,
     max_height: int | None,
 ) -> tuple[int, int]:
-    """Compute aspect-fit display size for content width with optional max height.
-
-    Fits to full content width unless that would exceed max_height, in which
-    case scales down to max_height and lets width shrink (centered on draw).
-    All corners stay sharp (no rounding applied anywhere).
-    """
+    """Compute aspect-fit display size for content width with optional max height."""
     if orig_w <= 0 or orig_h <= 0 or content_width <= 0:
         return content_width, 200
     scaled_h = int(round(orig_h * (content_width / orig_w)))
@@ -320,13 +410,7 @@ def _compute_image_grid_layout(
     gap: int,
     max_cell_height: int | None,
 ) -> tuple[list[tuple[int, int, int, int]], int]:
-    """Compute 2-column grid layout.
-
-    Returns ``(cells, total_h)`` where each cell is
-    ``(disp_w, disp_h, x_rel, y_rel)`` in content-relative coordinates.
-    Corrupt images (``None`` size) become ``cell_width x 120`` placeholders
-    so measure and draw stay consistent.
-    """
+    """Compute 2-column grid layout in content-relative coordinates."""
     n = len(sizes)
     if n == 0 or content_width <= 0:
         return [], 0
@@ -360,7 +444,7 @@ def _compute_image_grid_layout(
 
     total_h = sum(row_heights) + gap * (rows - 1) if rows else 0
 
-    cells: list[tuple[int, int, int, int]] = [ (0, 0, 0, 0) ] * n
+    cells: list[tuple[int, int, int, int]] = [(0, 0, 0, 0)] * n
     y_cursor = 0
     for r in range(rows):
         row_h = row_heights[r]
@@ -378,30 +462,45 @@ def _compute_image_grid_layout(
     return cells, total_h
 
 
+def _tone_color(tone: str, theme: Theme) -> str:
+    t = (tone or "info").lower()
+    if t == "live" or t == "success":
+        return "#22c55e"
+    if t == "warning":
+        return "#eab308"
+    if t == "error":
+        return "#ef4444"
+    return theme.accent_color
+
+
 class CardRenderer:
     def __init__(self, card: Card, theme: Theme = DARK_THEME) -> None:
         self.card = card
         self.theme = theme
 
-        # Load fonts - optimized hierarchy for clarity & density
+        # Font hierarchy
+        self.font_hero = _load_font("display", 38)
         self.font_title = _load_font("bold", 22)
         self.font_subtitle = _load_font("regular", 13)
+        self.font_section = _load_font("bold", 11)
         self.font_body = _load_font("regular", 14)
         self.font_body_bold = _load_font("bold", 14)
-        self.font_primary_item = _load_font("bold", 16)  # Prioritized & bigger for player names & key items
-        self.font_table_header = _load_font("bold", 12)  # Concise header font
-        self.font_label = _load_font("regular", 13)       # Subtle labels
+        self.font_primary_item = _load_font("bold", 15)
+        self.font_stat_value = _load_font("bold", 20)
+        self.font_table_header = _load_font("bold", 11)
+        self.font_label = _load_font("regular", 13)
         self.font_mono = _load_font("mono", 13)
+        self.font_mono_bold = _load_font("mono_bold", 13)
         self.font_small = _load_font("regular", 11)
         self.font_small_bold = _load_font("bold", 11)
 
-        # Measurements
+        # Layout metrics
         self.card_width = theme.card_width
         self.padding = theme.padding
         self.content_width = self.card_width - (self.padding * 2)
 
     def render(self) -> bytes:
-        # Pass 1: Measure required height
+        # Pass 1: Measure exact height
         dummy_img = Image.new("RGB", (self.card_width, 100), color=self.theme.canvas_bg)
         measure_draw = ImageDraw.Draw(dummy_img)
         total_height = self._measure_and_layout(measure_draw)
@@ -415,92 +514,180 @@ class CardRenderer:
         img.save(output, format="PNG", optimize=True)
         return output.getvalue()
 
-    def _measure_and_layout(self, draw: ImageDraw.ImageDraw) -> int:
-        y = self.padding
+    def _header_title_width(self, draw: ImageDraw.ImageDraw) -> int:
+        if self.card.badge:
+            badge_w, _ = _measure_badge(draw, self.card.badge, self.font_small_bold)
+            return max(120, self.content_width - badge_w - 16)
+        return self.content_width
 
-        # Accent top bar (sharp rectangle)
-        y += 3 + 8
-
-        # Header: Title, Subtitle, Badge
-        title_lines = _wrap_text(draw, self.card.title, self.font_title, self.content_width - 120)
-        title_h = sum(_get_text_height(draw, line, self.font_title) + 3 for line in title_lines)
+    def _measure_header(self, draw: ImageDraw.ImageDraw) -> tuple[int, int]:
+        """Return (header_band_height, header_content_height)."""
+        avail_w = self._header_title_width(draw)
+        title_lines = _wrap_text(draw, self.card.title, self.font_title, avail_w)
+        title_adv = _line_advance(draw, self.font_title, extra=4)
+        title_h = len(title_lines) * title_adv
 
         subtitle_h = 0
         if self.card.subtitle:
-            sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, self.content_width - 120)
-            subtitle_h = sum(_get_text_height(draw, line, self.font_subtitle) + 2 for line in sub_lines) + 2
+            sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, avail_w)
+            sub_adv = _line_advance(draw, self.font_subtitle, extra=3)
+            subtitle_h = 4 + len(sub_lines) * sub_adv
 
-        header_h = max(title_h + subtitle_h, 28)
-        y += header_h + 8
+        badge_h = 0
+        if self.card.badge:
+            _, badge_h = _measure_badge(draw, self.card.badge, self.font_small_bold)
 
-        # Header divider
-        y += 1 + 8
+        content_h = max(title_h + subtitle_h, badge_h, 28)
+        band_h = 4 + 16 + content_h + 14  # top accent bar + top pad + content + bottom pad
+        return band_h, content_h
 
-        # Elements
-        for el in self.card.elements:
-            y += self._measure_element(draw, el) + self.theme.element_spacing
+    def _measure_footer(self, draw: ImageDraw.ImageDraw) -> int:
+        if not self.card.footer:
+            return 0
+        footer_lines = _wrap_text(draw, self.card.footer, self.font_small, self.content_width)
+        adv = _line_advance(draw, self.font_small, extra=3)
+        return 10 + (len(footer_lines) * adv) + 10
 
-        # Footer
-        if self.card.footer:
-            footer_lines = _wrap_text(draw, self.card.footer, self.font_small, self.content_width)
-            footer_h = sum(_get_text_height(draw, line, self.font_small) + 2 for line in footer_lines)
-            y += 4 + footer_h
+    def _measure_and_layout(self, draw: ImageDraw.ImageDraw) -> int:
+        band_h, _ = self._measure_header(draw)
+        y = band_h + 14  # spacing after header divider
 
-        y += self.padding
+        for idx, el in enumerate(self.card.elements):
+            el_h = self._measure_element(draw, el)
+            y += el_h
+            if idx < len(self.card.elements) - 1:
+                y += self.theme.element_spacing
+
+        footer_h = self._measure_footer(draw)
+        if footer_h > 0:
+            y += 16 + footer_h
+        else:
+            y += self.padding
+
         if self.card.max_height is not None:
             return min(max(y, 80), self.card.max_height)
         return max(y, 80)
 
     def _measure_element(self, draw: ImageDraw.ImageDraw, element: CardElement) -> int:
         if isinstance(element, TextElement):
-            font = self.font_mono if element.is_code else (self.font_body_bold if element.bold else self.font_body)
+            font = (
+                self.font_mono
+                if element.is_code
+                else (self.font_body_bold if element.bold else self.font_body)
+            )
             lines = _wrap_text(draw, element.text, font, self.content_width)
             if element.max_lines is not None and len(lines) > element.max_lines:
                 lines = lines[: element.max_lines]
-            line_h = max(_get_text_height(draw, "Ag", font) + 4, 18)
+            line_h = _line_advance(draw, font, extra=5)
             return max(len(lines) * line_h, line_h)
 
-        elif isinstance(element, KeyValuesElement):
+        if isinstance(element, KeyValuesElement):
             cols = max(1, min(element.columns, 4))
-            rows_count = (len(element.items) + cols - 1) // cols
-            row_h = 28
-            return rows_count * row_h
+            rows_count = max(1, (len(element.items) + cols - 1) // cols)
+            return 16 + (rows_count * 30)
 
-        elif isinstance(element, TableElement):
+        if isinstance(element, TableElement):
             cols = len(element.headers)
             if cols == 0:
                 return 0
-            header_h = 28
-            row_h = 28
-            divider_h = 1
-            has_overflow_row = bool(element.max_rows is not None and len(element.rows) > element.max_rows)
-            rendered_rows = min(len(element.rows), element.max_rows) if element.max_rows is not None else len(element.rows)
+            header_h = 30
+            row_h = 32
+            has_overflow_row = bool(
+                element.max_rows is not None and len(element.rows) > element.max_rows
+            )
+            rendered_rows = (
+                min(len(element.rows), element.max_rows)
+                if element.max_rows is not None
+                else len(element.rows)
+            )
             total_rows = rendered_rows + (1 if has_overflow_row else 0)
-            return header_h + divider_h + (total_rows * row_h)
+            return header_h + 1 + (total_rows * row_h) + 2
 
-        elif isinstance(element, DividerElement):
+        if isinstance(element, DividerElement):
             return element.margin_top + (1 if element.line else 0) + element.margin_bottom
 
-        elif isinstance(element, ProgressBarElement):
-            return 32
+        if isinstance(element, ProgressBarElement):
+            return 38
 
-        elif isinstance(element, CodeBlockElement):
-            lines = element.code.splitlines() or [""]
+        if isinstance(element, CodeBlockElement):
+            clean_code = sanitize_for_pil(element.code)
+            lines = clean_code.splitlines() or [""]
             hidden_lines = 0
             if element.max_lines is not None and len(lines) > element.max_lines:
                 hidden_lines = len(lines) - element.max_lines
                 lines = lines[: element.max_lines]
             total_lines_count = len(lines) + (1 if hidden_lines > 0 else 0)
-            line_h = _get_text_height(draw, "Ag", self.font_mono) + 3
-            return (total_lines_count * line_h) + 14
+            line_h = _line_advance(draw, self.font_mono, extra=4)
+            return (total_lines_count * line_h) + 18
 
-        elif isinstance(element, ImageElement):
+        if isinstance(element, ImageElement):
             return self._measure_image_element(draw, element)
 
-        elif isinstance(element, ImageGridElement):
+        if isinstance(element, ImageGridElement):
             return self._measure_image_grid_element(draw, element)
 
+        if isinstance(element, SectionHeaderElement):
+            return 22
+
+        if isinstance(element, HeroElement):
+            return self._measure_hero_element(draw, element)
+
+        if isinstance(element, StatGridElement):
+            return self._measure_stat_grid_element(draw, element)
+
+        if isinstance(element, TimelineElement):
+            return self._measure_timeline_element(draw, element)
+
+        if isinstance(element, BarListElement):
+            return self._measure_bar_list_element(draw, element)
+
+        if isinstance(element, RangeBarElement):
+            return 56
+
+        if isinstance(element, CalloutElement):
+            return self._measure_callout_element(draw, element)
+
         return 18
+
+    def _measure_hero_element(self, draw: ImageDraw.ImageDraw, element: HeroElement) -> int:
+        val_h = _get_text_height(draw, sanitize_for_pil(element.value) or "0", self.font_hero)
+        lbl_h = _line_advance(draw, self.font_body_bold, extra=4)
+        sub_h = _line_advance(draw, self.font_small, extra=3) if element.subtext else 0
+        text_stack_h = max(val_h + 4, lbl_h + sub_h + 6)
+        icon_h = 56 if element.icon else 0
+        return max(text_stack_h, icon_h, 60) + 28
+
+    def _measure_stat_grid_element(self, draw: ImageDraw.ImageDraw, element: StatGridElement) -> int:
+        if not element.items:
+            return 0
+        cols = max(1, min(element.columns, 4))
+        rows = (len(element.items) + cols - 1) // cols
+        has_sub = any(t.subtext for t in element.items)
+        tile_h = 74 if has_sub else 58
+        gap = 8
+        return (rows * tile_h) + max(0, rows - 1) * gap
+
+    def _measure_timeline_element(self, draw: ImageDraw.ImageDraw, element: TimelineElement) -> int:
+        if not element.items:
+            return 0
+        axis_h = 22
+        row_h = 46
+        return axis_h + (len(element.items) * row_h) + 8
+
+    def _measure_bar_list_element(self, draw: ImageDraw.ImageDraw, element: BarListElement) -> int:
+        if not element.items:
+            return 0
+        row_h = 48
+        return 12 + (len(element.items) * row_h)
+
+    def _measure_callout_element(self, draw: ImageDraw.ImageDraw, element: CalloutElement) -> int:
+        inner_w = self.content_width - 28
+        h = 12
+        if element.title:
+            h += _line_advance(draw, self.font_body_bold, extra=4)
+        lines = _wrap_text(draw, element.text, self.font_body, inner_w)
+        h += len(lines) * _line_advance(draw, self.font_body, extra=4)
+        return h + 10
 
     def _measure_image_element(
         self, draw: ImageDraw.ImageDraw, element: ImageElement
@@ -519,11 +706,8 @@ class CardRenderer:
                 draw, element.caption, self.font_small, self.content_width
             )
             if cap_lines:
-                cap_h = sum(
-                    _get_text_height(draw, line, self.font_small) + 2
-                    for line in cap_lines
-                )
-                total += 6 + cap_h
+                adv = _line_advance(draw, self.font_small, extra=3)
+                total += 6 + (len(cap_lines) * adv)
         return total
 
     def _measure_image_grid_element(
@@ -544,73 +728,95 @@ class CardRenderer:
                 draw, element.caption, self.font_small, self.content_width
             )
             if cap_lines:
-                cap_h = sum(
-                    _get_text_height(draw, line, self.font_small) + 2
-                    for line in cap_lines
-                )
-                total += (6 + cap_h) if images else cap_h
+                adv = _line_advance(draw, self.font_small, extra=3)
+                total += (6 + len(cap_lines) * adv) if images else (len(cap_lines) * adv)
         return total
 
     def _draw_all(
         self, draw: ImageDraw.ImageDraw, img: Image.Image, total_height: int
     ) -> None:
-        # Draw outer card box with sharp corners (NO rounded corners)
+        accent = self.card.accent_color or self.theme.accent_color
+
+        # Card canvas background
         draw.rectangle(
             [(0, 0), (self.card_width - 1, total_height - 1)],
             fill=self.theme.card_bg,
-            outline=self.theme.border_color,
-            width=1,
         )
 
-        accent = self.card.accent_color or self.theme.accent_color
-
-        # Accent top bar: sharp rectangle
+        # Header band background (subtle tint toward accent)
+        band_h, _ = self._measure_header(draw)
+        header_bg = _blend_hex(self.theme.panel_bg, accent, 0.08)
         draw.rectangle(
-            [(0, 0), (self.card_width - 1, 3)],
-            fill=accent,
+            [(0, 4), (self.card_width - 1, band_h - 1)],
+            fill=header_bg,
         )
 
-        y = self.padding + 2
-        x = self.padding
+        # Sharp top accent bar (4px)
+        draw.rectangle([(0, 0), (self.card_width - 1, 3)], fill=accent)
 
-        # Header: Title & optional Subtitle
-        title_lines = _wrap_text(draw, self.card.title, self.font_title, self.content_width - 130)
+        # Header divider line
+        draw.rectangle(
+            [(0, band_h), (self.card_width - 1, band_h)],
+            fill=self.theme.border_color,
+        )
+
+        x = self.padding
+        y = 4 + 16
+        avail_w = self._header_title_width(draw)
+
+        title_lines = _wrap_text(draw, self.card.title, self.font_title, avail_w)
+        title_adv = _line_advance(draw, self.font_title, extra=4)
         curr_y = y
         for line in title_lines:
-            draw.text((x, curr_y), line, fill=self.theme.text_primary, font=self.font_title)
-            curr_y += _get_text_height(draw, line, self.font_title) + 3
+            _draw_text_ink(draw, x, curr_y, line, self.font_title, self.theme.text_primary)
+            curr_y += title_adv
 
         if self.card.subtitle:
-            sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, self.content_width - 130)
+            curr_y += 4
+            sub_lines = _wrap_text(draw, self.card.subtitle, self.font_subtitle, avail_w)
+            sub_adv = _line_advance(draw, self.font_subtitle, extra=3)
             for line in sub_lines:
-                draw.text((x, curr_y), line, fill=self.theme.text_secondary, font=self.font_subtitle)
-                curr_y += _get_text_height(draw, line, self.font_subtitle) + 2
+                _draw_text_ink(draw, x, curr_y, line, self.font_subtitle, self.theme.text_secondary)
+                curr_y += sub_adv
 
-        # Header Badge: top right with sharp rectangle
         if self.card.badge:
-            badge_w, badge_h = _measure_badge(draw, self.card.badge, self.font_small_bold)
+            badge_w, _ = _measure_badge(draw, self.card.badge, self.font_small_bold)
             badge_x = self.card_width - self.padding - badge_w
             _draw_sharp_badge(draw, self.card.badge, x=badge_x, y=y + 2, font=self.font_small_bold)
 
-        header_h = max(curr_y - y, 28)
-        y += header_h + 8
-
-        # Header Divider: sharp 1px rectangle
-        draw.rectangle([(x, y), (x + self.content_width, y)], fill=self.theme.border_color)
-        y += 1 + 8
-
-        # Draw Elements
-        for el in self.card.elements:
+        # Elements region
+        y = band_h + 14
+        for idx, el in enumerate(self.card.elements):
             y = self._draw_element(draw, img, el, x, y)
-            y += self.theme.element_spacing
+            if idx < len(self.card.elements) - 1:
+                y += self.theme.element_spacing
 
-        # Draw Footer
-        if self.card.footer:
-            y += 4
+        # Footer strip
+        footer_h = self._measure_footer(draw)
+        if self.card.footer and footer_h > 0:
+            fy = total_height - footer_h
+            draw.rectangle(
+                [(0, fy), (self.card_width - 1, total_height - 1)],
+                fill=self.theme.panel_recessed,
+            )
+            draw.rectangle(
+                [(0, fy), (self.card_width - 1, fy)],
+                fill=self.theme.border_color,
+            )
             footer_lines = _wrap_text(draw, self.card.footer, self.font_small, self.content_width)
+            adv = _line_advance(draw, self.font_small, extra=3)
+            line_y = fy + 10
             for line in footer_lines:
-                draw.text((x, y), line, fill=self.theme.text_muted, font=self.font_small)
-                y += _get_text_height(draw, line, self.font_small) + 2
+                _draw_text_ink(draw, x, line_y, line, self.font_small, self.theme.text_muted)
+                line_y += adv
+
+        # Outer sharp 1px border (drawn last so max_height clipping keeps crisp border)
+        draw.rectangle(
+            [(0, 0), (self.card_width - 1, total_height - 1)],
+            outline=self.theme.border_color,
+            width=1,
+        )
+        draw.rectangle([(0, 0), (self.card_width - 1, 3)], fill=accent)
 
     def _draw_element(
         self,
@@ -621,221 +827,834 @@ class CardRenderer:
         y: int,
     ) -> int:
         if isinstance(element, TextElement):
-            font = self.font_mono if element.is_code else (self.font_body_bold if element.bold else self.font_body)
-            color = element.color or (self.theme.text_muted if element.muted else self.theme.text_primary)
+            font = (
+                self.font_mono
+                if element.is_code
+                else (self.font_body_bold if element.bold else self.font_body)
+            )
+            color = element.color or (
+                self.theme.text_muted if element.muted else self.theme.text_primary
+            )
             lines = _wrap_text(draw, element.text, font, self.content_width)
             if element.max_lines is not None and len(lines) > element.max_lines:
                 lines = lines[: element.max_lines]
                 if lines:
-                    lines[-1] = _fit_text(draw, f"{lines[-1]}", font, self.content_width, overflow="ellipsis")
-            line_h = max(_get_text_height(draw, "Ag", font) + 4, 18)
+                    lines[-1] = _fit_text(
+                        draw, lines[-1], font, self.content_width, overflow="ellipsis"
+                    )
+            line_h = _line_advance(draw, font, extra=5)
             for line in lines:
-                draw.text((x, y), line, fill=color, font=font)
+                _draw_text_ink(draw, x, y, line, font, color)
                 y += line_h
             return y
 
-        elif isinstance(element, KeyValuesElement):
+        if isinstance(element, KeyValuesElement):
             cols = max(1, min(element.columns, 4))
-            col_w = self.content_width // cols
-            row_h = 28
+            rows_count = max(1, (len(element.items) + cols - 1) // cols)
+            row_h = 30
+            box_h = 16 + (rows_count * row_h)
+
+            draw.rectangle(
+                [(x, y), (x + self.content_width, y + box_h)],
+                fill=self.theme.panel_recessed,
+                outline=self.theme.border_color,
+                width=1,
+            )
+
+            inner_x = x + 12
+            inner_w = self.content_width - 24
+            col_w = inner_w // cols
+
+            for c in range(1, cols):
+                sep_x = inner_x + c * col_w - 6
+                draw.line(
+                    [(sep_x, y + 8), (sep_x, y + box_h - 8)],
+                    fill=self.theme.border_color,
+                    width=1,
+                )
 
             for idx, (k, v) in enumerate(element.items):
                 col_idx = idx % cols
                 row_idx = idx // cols
-                item_x = x + (col_idx * col_w)
-                item_y = y + (row_idx * row_h)
+                item_x = inner_x + (col_idx * col_w)
+                item_y = y + 8 + (row_idx * row_h)
+                avail_w = col_w - 14
 
-                avail_w = col_w - 12
-                # Key in secondary color
-                key_text = f"{k}:"
-                fitted_key = _fit_text(draw, key_text, self.font_label, max(20, avail_w - 20), overflow=element.overflow)
-                draw.text((item_x, item_y + 4), fitted_key, fill=self.theme.text_secondary, font=self.font_label)
-                kw = _get_text_width(draw, fitted_key, self.font_label) + 6
-
+                key_text = f"{sanitize_for_pil(k)}:"
+                fitted_key = _fit_text(
+                    draw, key_text, self.font_label, max(20, avail_w - 20), overflow=element.overflow
+                )
+                kw, _ = _draw_text_vcenter(
+                    draw, item_x, item_y, row_h, fitted_key, self.font_label, self.theme.text_secondary
+                )
+                kw += 8
                 max_val_w = max(10, avail_w - kw)
 
-                # Value: prominent bold in text_primary
                 if isinstance(v, Badge):
-                    _draw_sharp_badge(draw, v, item_x + kw, item_y + 2, self.font_small_bold)
+                    _, bh = _measure_badge(draw, v, self.font_small_bold)
+                    by = item_y + (row_h - bh) // 2
+                    _draw_sharp_badge(draw, v, item_x + kw, by, self.font_small_bold)
                 else:
-                    fitted_val = _fit_text(draw, str(v), self.font_body_bold, max_val_w, overflow=element.overflow)
-                    draw.text((item_x + kw, item_y + 3), fitted_val, fill=self.theme.text_primary, font=self.font_body_bold)
+                    fitted_val = _fit_text(
+                        draw, str(v), self.font_body_bold, max_val_w, overflow=element.overflow
+                    )
+                    _draw_text_vcenter(
+                        draw, item_x + kw, item_y, row_h, fitted_val, self.font_body_bold, self.theme.text_primary
+                    )
 
-            rows_count = (len(element.items) + cols - 1) // cols
-            return y + (rows_count * row_h)
+            return y + box_h
 
-        elif isinstance(element, TableElement):
-            cols = len(element.headers)
-            if cols == 0:
-                return y
+        if isinstance(element, TableElement):
+            return self._draw_table_element(draw, element, x, y)
 
-            header_h = 28
-            row_h = 28
-            alignments = element.alignments or ["left"] * cols
-            col_widths = _calculate_col_widths(self.content_width, cols, element.col_widths)
-
-            # Header background: sharp rectangle (panel_bg)
-            draw.rectangle([(x, y), (x + self.content_width, y + header_h)], fill=self.theme.panel_bg)
-
-            # Draw header labels (concise, subtle uppercase headers)
-            curr_x = x
-            for i, header in enumerate(element.headers):
-                w_i = col_widths[i]
-                align = alignments[i] if i < len(alignments) else "left"
-                fitted_header = _fit_text(draw, header.upper(), self.font_table_header, w_i - 14, overflow=element.overflow)
-                hw = _get_text_width(draw, fitted_header, self.font_table_header)
-                if align == "right":
-                    tx = curr_x + w_i - hw - 8
-                elif align == "center":
-                    tx = curr_x + (w_i - hw) // 2
-                else:
-                    tx = curr_x + 8
-                draw.text((tx, y + 6), fitted_header, fill=self.theme.text_secondary, font=self.font_table_header)
-                curr_x += w_i
-
-            y += header_h
-
-            # Header divider: sharp rectangle
-            draw.rectangle([(x, y), (x + self.content_width, y)], fill=self.theme.border_color)
-            y += 1
-
-            # Determine rows to render & check for row overflow
-            rows_to_render = element.rows
-            has_overflow_row = False
-            hidden_rows_count = 0
-            if element.max_rows is not None and len(element.rows) > element.max_rows:
-                rows_to_render = element.rows[: element.max_rows]
-                has_overflow_row = True
-                hidden_rows_count = len(element.rows) - element.max_rows
-
-            # Draw rows
-            for row_idx, row in enumerate(rows_to_render):
-                row_bg = self.theme.card_bg if row_idx % 2 == 0 else self.theme.panel_bg
-                draw.rectangle([(x, y), (x + self.content_width, y + row_h)], fill=row_bg)
-
-                curr_x = x
-                for i in range(cols):
-                    w_i = col_widths[i]
-                    val = str(row[i]) if i < len(row) else ""
-                    align = alignments[i] if i < len(alignments) else "left"
-
-                    is_primary = (element.primary_col is not None and i == element.primary_col)
-                    is_bold = is_primary or (element.bold_cols is not None and i in element.bold_cols)
-
-                    if is_primary:
-                        cell_font = self.font_primary_item
-                        cell_color = self.theme.text_primary
-                        y_offset = 4
-                    elif is_bold:
-                        cell_font = self.font_body_bold
-                        cell_color = self.theme.text_primary
-                        y_offset = 5
-                    else:
-                        cell_font = self.font_body
-                        cell_color = self.theme.text_secondary
-                        y_offset = 5
-
-                    fitted_val = _fit_text(draw, val, cell_font, w_i - 14, overflow=element.overflow)
-                    vw = _get_text_width(draw, fitted_val, cell_font)
-                    if align == "right":
-                        tx = curr_x + w_i - vw - 8
-                    elif align == "center":
-                        tx = curr_x + (w_i - vw) // 2
-                    else:
-                        tx = curr_x + 8
-                    draw.text((tx, y + y_offset), fitted_val, fill=cell_color, font=cell_font)
-                    curr_x += w_i
-
-                y += row_h
-
-            if has_overflow_row:
-                overflow_bg = self.theme.card_bg if len(rows_to_render) % 2 == 0 else self.theme.panel_bg
-                draw.rectangle([(x, y), (x + self.content_width, y + row_h)], fill=overflow_bg)
-                overflow_text = f"… (+{hidden_rows_count} muuta riviä)"
-                draw.text((x + 8, y + 6), overflow_text, fill=self.theme.text_muted, font=self.font_small)
-                y += row_h
-
-            return y
-
-        elif isinstance(element, DividerElement):
+        if isinstance(element, DividerElement):
             y += element.margin_top
             if element.line:
-                draw.rectangle([(x, y), (x + self.content_width, y)], fill=self.theme.border_color)
+                draw.rectangle(
+                    [(x, y), (x + self.content_width, y)],
+                    fill=self.theme.border_color,
+                )
                 y += 1
             y += element.margin_bottom
             return y
 
-        elif isinstance(element, ProgressBarElement):
-            label_text = element.label
-            pct = 0.0
-            if element.max_value > 0:
-                pct = max(0.0, min(1.0, element.value / element.max_value))
-            val_text = f"{element.value:g}{element.unit} / {element.max_value:g}{element.unit} ({pct * 100:.1f}%)"
+        if isinstance(element, ProgressBarElement):
+            return self._draw_progress_bar_element(draw, element, x, y)
 
-            # Labels row: label in secondary and value in bold primary
-            draw.text((x, y), label_text, fill=self.theme.text_secondary, font=self.font_label)
-            vw = _get_text_width(draw, val_text, self.font_body_bold)
-            draw.text((x + self.content_width - vw, y), val_text, fill=self.theme.text_primary, font=self.font_body_bold)
-            y += 18
+        if isinstance(element, CodeBlockElement):
+            return self._draw_code_block_element(draw, element, x, y)
 
-            # Sharp track rectangle (panel_bg)
-            bar_h = 8
-            draw.rectangle(
-                [(x, y), (x + self.content_width, y + bar_h)],
-                fill=self.theme.panel_bg,
-                outline=self.theme.border_color,
-                width=1,
-            )
-
-            # Sharp fill rectangle (accent_color or element color)
-            fill_w = int(self.content_width * pct)
-            if fill_w > 0:
-                bar_color = element.color or self.theme.accent_color
-                draw.rectangle([(x, y), (x + fill_w, y + bar_h)], fill=bar_color)
-
-            y += bar_h + 6
-            return y
-
-        elif isinstance(element, CodeBlockElement):
-            lines = element.code.splitlines() or [""]
-            hidden_lines = 0
-            if element.max_lines is not None and len(lines) > element.max_lines:
-                hidden_lines = len(lines) - element.max_lines
-                lines = lines[: element.max_lines]
-
-            line_h = _get_text_height(draw, "Ag", self.font_mono) + 3
-            total_lines_count = len(lines) + (1 if hidden_lines > 0 else 0)
-            block_h = (total_lines_count * line_h) + 14
-            max_code_w = self.content_width - 20
-
-            # Background and border: sharp rectangle (NO rounded corners)
-            draw.rectangle(
-                [(x, y), (x + self.content_width, y + block_h)],
-                fill=self.theme.code_bg,
-                outline=self.theme.border_color,
-                width=1,
-            )
-
-            curr_y = y + 7
-            for line in lines:
-                fitted_line = _fit_text(draw, line, self.font_mono, max_code_w, overflow=element.overflow)
-                draw.text((x + 10, curr_y), fitted_line, fill=self.theme.text_primary, font=self.font_mono)
-                curr_y += line_h
-
-            if hidden_lines > 0:
-                overflow_text = f"… (+{hidden_lines} riviä)"
-                draw.text((x + 10, curr_y), overflow_text, fill=self.theme.text_muted, font=self.font_mono)
-                curr_y += line_h
-
-            return y + block_h
-
-        elif isinstance(element, ImageElement):
+        if isinstance(element, ImageElement):
             return self._draw_image_element(draw, img, element, x, y)
 
-        elif isinstance(element, ImageGridElement):
+        if isinstance(element, ImageGridElement):
             return self._draw_image_grid_element(draw, img, element, x, y)
 
+        if isinstance(element, SectionHeaderElement):
+            return self._draw_section_header(draw, element, x, y)
+
+        if isinstance(element, HeroElement):
+            return self._draw_hero_element(draw, element, x, y)
+
+        if isinstance(element, StatGridElement):
+            return self._draw_stat_grid_element(draw, element, x, y)
+
+        if isinstance(element, TimelineElement):
+            return self._draw_timeline_element(draw, element, x, y)
+
+        if isinstance(element, BarListElement):
+            return self._draw_bar_list_element(draw, element, x, y)
+
+        if isinstance(element, RangeBarElement):
+            return self._draw_range_bar_element(draw, element, x, y)
+
+        if isinstance(element, CalloutElement):
+            return self._draw_callout_element(draw, element, x, y)
+
         return y
+
+    def _draw_table_element(
+        self, draw: ImageDraw.ImageDraw, element: TableElement, x: int, y: int
+    ) -> int:
+        cols = len(element.headers)
+        if cols == 0:
+            return y
+
+        header_h = 30
+        row_h = 32
+        alignments = element.alignments or ["left"] * cols
+        col_widths = _calculate_col_widths(self.content_width, cols, element.col_widths)
+        mono_cols = set(element.mono_cols or [])
+        bold_cols = set(element.bold_cols or [])
+
+        rows_to_render = element.rows
+        has_overflow_row = False
+        hidden_rows_count = 0
+        if element.max_rows is not None and len(element.rows) > element.max_rows:
+            rows_to_render = element.rows[: element.max_rows]
+            has_overflow_row = True
+            hidden_rows_count = len(element.rows) - element.max_rows
+
+        total_rows = len(rows_to_render) + (1 if has_overflow_row else 0)
+        total_h = header_h + 1 + (total_rows * row_h) + 2
+        table_top = y
+
+        # Header bar
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + header_h)],
+            fill=self.theme.panel_bg,
+        )
+        curr_x = x
+        for i, header in enumerate(element.headers):
+            w_i = col_widths[i]
+            align = alignments[i] if i < len(alignments) else "left"
+            fitted_header = _fit_text(
+                draw, header.upper(), self.font_table_header, w_i - 16, overflow=element.overflow
+            )
+            hw = _get_text_width(draw, fitted_header, self.font_table_header)
+            if align == "right":
+                tx = curr_x + w_i - hw - 10
+            elif align == "center":
+                tx = curr_x + (w_i - hw) // 2
+            else:
+                tx = curr_x + 10
+            _draw_text_vcenter(
+                draw, tx, y, header_h, fitted_header, self.font_table_header, self.theme.text_muted
+            )
+            curr_x += w_i
+
+        y += header_h
+        draw.rectangle([(x, y), (x + self.content_width, y)], fill=self.theme.border_bright)
+        y += 1
+
+        for row_idx, row in enumerate(rows_to_render):
+            row_bg = self.theme.card_bg if row_idx % 2 == 0 else self.theme.panel_recessed
+            draw.rectangle([(x, y), (x + self.content_width, y + row_h)], fill=row_bg)
+
+            curr_x = x
+            for i in range(cols):
+                w_i = col_widths[i]
+                cell_val = row[i] if i < len(row) else ""
+                align = alignments[i] if i < len(alignments) else "left"
+
+                if isinstance(cell_val, Badge):
+                    bw, bh = _measure_badge(draw, cell_val, self.font_small_bold)
+                    if align == "right":
+                        bx = curr_x + w_i - bw - 10
+                    elif align == "center":
+                        bx = curr_x + (w_i - bw) // 2
+                    else:
+                        bx = curr_x + 10
+                    by = y + (row_h - bh) // 2
+                    _draw_sharp_badge(draw, cell_val, bx, by, self.font_small_bold)
+                else:
+                    is_primary = element.primary_col is not None and i == element.primary_col
+                    is_bold = is_primary or (i in bold_cols)
+                    is_mono = i in mono_cols
+
+                    if is_mono and is_bold:
+                        cell_font = self.font_mono_bold
+                        cell_color = self.theme.text_primary
+                    elif is_mono:
+                        cell_font = self.font_mono
+                        cell_color = self.theme.text_secondary
+                    elif is_primary:
+                        cell_font = self.font_primary_item
+                        cell_color = self.theme.text_primary
+                    elif is_bold:
+                        cell_font = self.font_body_bold
+                        cell_color = self.theme.text_primary
+                    else:
+                        cell_font = self.font_body
+                        cell_color = self.theme.text_secondary
+
+                    fitted_val = _fit_text(
+                        draw, str(cell_val), cell_font, w_i - 16, overflow=element.overflow
+                    )
+                    vw = _get_text_width(draw, fitted_val, cell_font)
+                    if align == "right":
+                        tx = curr_x + w_i - vw - 10
+                    elif align == "center":
+                        tx = curr_x + (w_i - vw) // 2
+                    else:
+                        tx = curr_x + 10
+                    _draw_text_vcenter(draw, tx, y, row_h, fitted_val, cell_font, cell_color)
+                curr_x += w_i
+            y += row_h
+
+        if has_overflow_row:
+            overflow_bg = (
+                self.theme.card_bg if len(rows_to_render) % 2 == 0 else self.theme.panel_recessed
+            )
+            draw.rectangle([(x, y), (x + self.content_width, y + row_h)], fill=overflow_bg)
+            overflow_text = f"… (+{hidden_rows_count} muuta riviä)"
+            _draw_text_vcenter(
+                draw, x + 10, y, row_h, overflow_text, self.font_small, self.theme.text_muted
+            )
+            y += row_h
+
+        # Sharp outer border around the table
+        draw.rectangle(
+            [(x, table_top), (x + self.content_width, table_top + total_h - 1)],
+            outline=self.theme.border_color,
+            width=1,
+        )
+        return table_top + total_h
+
+    def _draw_progress_bar_element(
+        self, draw: ImageDraw.ImageDraw, element: ProgressBarElement, x: int, y: int
+    ) -> int:
+        label_text = sanitize_for_pil(element.label)
+        pct = 0.0
+        if element.max_value > 0:
+            pct = max(0.0, min(1.0, element.value / element.max_value))
+
+        unit = element.unit or ""
+        if unit.strip() == "%" and abs(element.max_value - 100.0) < 1e-6:
+            pct_str = f"{element.value:g}%"
+            val_text = f"{element.sublabel} • {pct_str}" if element.sublabel else pct_str
+        else:
+            unit_part = f" {unit}" if unit else ""
+            base = f"{element.value:g} / {element.max_value:g}{unit_part}"
+            if element.show_percentage:
+                base = f"{base} ({pct * 100:.0f}%)"
+            val_text = f"{element.sublabel} • {base}" if element.sublabel else base
+        val_text = sanitize_for_pil(val_text)
+
+        _draw_text_ink(draw, x, y + 1, label_text, self.font_body_bold, self.theme.text_secondary)
+        vw = _get_text_width(draw, val_text, self.font_mono_bold)
+        _draw_text_ink(
+            draw, x + self.content_width - vw, y + 1, val_text, self.font_mono_bold, self.theme.text_primary
+        )
+        y += 22
+
+        bar_h = 10
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + bar_h)],
+            fill=self.theme.panel_recessed,
+            outline=self.theme.border_color,
+            width=1,
+        )
+
+        # Subtle quartile tick marks on the track
+        for frac in (0.25, 0.5, 0.75):
+            tx = x + int(self.content_width * frac)
+            draw.line([(tx, y + 1), (tx, y + bar_h - 1)], fill=self.theme.border_color, width=1)
+
+        bar_color = element.color or self.theme.accent_color
+        fill_w = int(self.content_width * pct)
+        if fill_w > 0:
+            draw.rectangle([(x + 1, y + 1), (x + fill_w - 1, y + bar_h - 1)], fill=bar_color)
+            if fill_w >= 4:
+                tip_color = _blend_hex(bar_color, "#ffffff", 0.35)
+                draw.rectangle([(x + fill_w - 2, y + 1), (x + fill_w, y + bar_h - 1)], fill=tip_color)
+
+        return y + bar_h + 6
+
+    def _draw_code_block_element(
+        self, draw: ImageDraw.ImageDraw, element: CodeBlockElement, x: int, y: int
+    ) -> int:
+        clean_code = sanitize_for_pil(element.code)
+        lines = clean_code.splitlines() or [""]
+        hidden_lines = 0
+        if element.max_lines is not None and len(lines) > element.max_lines:
+            hidden_lines = len(lines) - element.max_lines
+            lines = lines[: element.max_lines]
+
+        line_h = _line_advance(draw, self.font_mono, extra=4)
+        total_lines_count = len(lines) + (1 if hidden_lines > 0 else 0)
+        block_h = (total_lines_count * line_h) + 18
+        max_code_w = self.content_width - 28
+
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + block_h)],
+            fill=self.theme.code_bg,
+            outline=self.theme.border_color,
+            width=1,
+        )
+        # Left 3px accent stripe
+        draw.rectangle(
+            [(x, y), (x + 2, y + block_h)],
+            fill=self.card.accent_color or self.theme.accent_color,
+        )
+
+        if element.language:
+            lang = sanitize_for_pil(element.language).upper()
+            lw = _get_text_width(draw, lang, self.font_small_bold)
+            _draw_text_ink(
+                draw, x + self.content_width - lw - 8, y + 5, lang, self.font_small_bold, self.theme.text_muted
+            )
+
+        curr_y = y + 9
+        for line in lines:
+            fitted_line = _fit_text(
+                draw, line, self.font_mono, max_code_w, overflow=element.overflow
+            )
+            _draw_text_ink(draw, x + 14, curr_y, fitted_line, self.font_mono, self.theme.text_primary)
+            curr_y += line_h
+
+        if hidden_lines > 0:
+            overflow_text = f"… (+{hidden_lines} riviä)"
+            _draw_text_ink(draw, x + 14, curr_y, overflow_text, self.font_mono, self.theme.text_muted)
+
+        return y + block_h
+
+    def _draw_section_header(
+        self, draw: ImageDraw.ImageDraw, element: SectionHeaderElement, x: int, y: int
+    ) -> int:
+        accent = element.accent_color or self.card.accent_color or self.theme.accent_color
+        title = sanitize_for_pil(element.title).upper()
+        # Small sharp square accent pip
+        draw.rectangle([(x, y + 4), (x + 4, y + 16)], fill=accent)
+        tw, _ = _draw_text_vcenter(
+            draw, x + 11, y, 20, title, self.font_section, self.theme.text_secondary
+        )
+        line_start = x + 11 + tw + 10
+        line_end = x + self.content_width
+        if element.right_text:
+            rtext = sanitize_for_pil(element.right_text)
+            rw = _get_text_width(draw, rtext, self.font_small_bold)
+            _draw_text_vcenter(
+                draw, x + self.content_width - rw, y, 20, rtext, self.font_small_bold, self.theme.text_muted
+            )
+            line_end -= rw + 10
+        if line_end > line_start + 12:
+            draw.rectangle([(line_start, y + 10), (line_end, y + 10)], fill=self.theme.border_color)
+        return y + 22
+
+    def _draw_hero_element(
+        self, draw: ImageDraw.ImageDraw, element: HeroElement, x: int, y: int
+    ) -> int:
+        h = self._measure_hero_element(draw, element)
+        accent = element.accent_color or self.card.accent_color or self.theme.accent_color
+        panel_fill = _blend_hex(self.theme.panel_recessed, accent, 0.06)
+
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + h)],
+            fill=panel_fill,
+            outline=self.theme.border_color,
+            width=1,
+        )
+        # Left 3px accent stripe
+        draw.rectangle([(x, y), (x + 3, y + h)], fill=accent)
+
+        cursor_x = x + 18
+        if element.icon:
+            icon_cx = cursor_x + 26
+            icon_cy = y + h // 2
+            draw_icon(
+                draw,
+                element.icon,
+                icon_cx,
+                icon_cy,
+                size=46,
+                color=accent,
+                secondary_color=self.theme.text_primary,
+            )
+            cursor_x += 68
+
+        val_text = sanitize_for_pil(element.value)
+        vw, _ = _draw_text_vcenter(
+            draw, cursor_x, y, h, val_text, self.font_hero, self.theme.text_primary
+        )
+        cursor_x += vw + 18
+
+        right_reserved = 0
+        if element.right_value or element.right_label:
+            r_val = sanitize_for_pil(element.right_value or "")
+            r_lbl = sanitize_for_pil(element.right_label or "")
+            rw = max(
+                _get_text_width(draw, r_val, self.font_mono_bold),
+                _get_text_width(draw, r_lbl, self.font_small),
+            )
+            right_reserved = rw + 28
+            rx = x + self.content_width - 16
+            if r_lbl and r_val:
+                lw = _get_text_width(draw, r_lbl, self.font_small)
+                vw_r = _get_text_width(draw, r_val, self.font_mono_bold)
+                _draw_text_ink(draw, rx - lw, y + 18, r_lbl, self.font_small, self.theme.text_muted)
+                _draw_text_ink(
+                    draw, rx - vw_r, y + 36, r_val, self.font_mono_bold, self.theme.text_primary
+                )
+            elif r_val:
+                vw_r = _get_text_width(draw, r_val, self.font_mono_bold)
+                _draw_text_vcenter(
+                    draw, rx - vw_r, y, h, r_val, self.font_mono_bold, self.theme.text_primary
+                )
+
+        avail_lbl_w = max(60, (x + self.content_width - right_reserved) - cursor_x - 10)
+        lbl = _fit_text(draw, element.label, self.font_body_bold, avail_lbl_w)
+        if element.subtext:
+            sub = _fit_text(draw, element.subtext, self.font_label, avail_lbl_w)
+            lbl_adv = _line_advance(draw, self.font_body_bold, extra=4)
+            sub_h = _get_text_height(draw, sub or "Ag", self.font_label)
+            stack_h = lbl_adv + sub_h
+            top_y = y + (h - stack_h) // 2
+            _draw_text_ink(draw, cursor_x, top_y, lbl, self.font_body_bold, self.theme.text_primary)
+            _draw_text_ink(
+                draw, cursor_x, top_y + lbl_adv, sub, self.font_label, self.theme.text_secondary
+            )
+        else:
+            _draw_text_vcenter(draw, cursor_x, y, h, lbl, self.font_body_bold, self.theme.text_primary)
+
+        return y + h
+
+    def _draw_stat_grid_element(
+        self, draw: ImageDraw.ImageDraw, element: StatGridElement, x: int, y: int
+    ) -> int:
+        if not element.items:
+            return y
+        cols = max(1, min(element.columns, 4))
+        gap = 8
+        has_sub = any(t.subtext for t in element.items)
+        tile_h = 74 if has_sub else 58
+        tile_w = (self.content_width - gap * (cols - 1)) // cols
+
+        for idx, tile in enumerate(element.items):
+            r = idx // cols
+            c = idx % cols
+            # Last tile stretches to fill any remainder pixels on the right edge
+            is_last_col = c == cols - 1
+            tx = x + c * (tile_w + gap)
+            tw = (self.content_width - (tx - x)) if is_last_col else tile_w
+            ty = y + r * (tile_h + gap)
+            accent = tile.accent_color or self.card.accent_color or self.theme.accent_color
+
+            draw.rectangle(
+                [(tx, ty), (tx + tw, ty + tile_h)],
+                fill=self.theme.panel_recessed,
+                outline=self.theme.border_color,
+                width=1,
+            )
+            # Top 2px accent bar
+            draw.rectangle([(tx, ty), (tx + tw, ty + 2)], fill=accent)
+
+            inner_w = max(20, tw - 20)
+            lbl = _fit_text(draw, tile.label.upper(), self.font_table_header, inner_w)
+            _draw_text_ink(draw, tx + 10, ty + 10, lbl, self.font_table_header, self.theme.text_muted)
+
+            val = _fit_text(draw, tile.value, self.font_stat_value, inner_w)
+            _draw_text_ink(draw, tx + 10, ty + 27, val, self.font_stat_value, self.theme.text_primary)
+
+            if tile.subtext:
+                sub = _fit_text(draw, tile.subtext, self.font_small, inner_w)
+                _draw_text_ink(draw, tx + 10, ty + 53, sub, self.font_small, self.theme.text_secondary)
+
+        rows = (len(element.items) + cols - 1) // cols
+        return y + (rows * tile_h) + max(0, rows - 1) * gap
+
+    def _draw_timeline_element(
+        self, draw: ImageDraw.ImageDraw, element: TimelineElement, x: int, y: int
+    ) -> int:
+        if not element.items:
+            return y
+
+        total_h = self._measure_timeline_element(draw, element)
+        axis_h = 22
+        row_h = 46
+        label_col_w = min(132, max(96, int(self.content_width * 0.18)))
+        track_x = x + label_col_w + 10
+        track_w = self.content_width - label_col_w - 20
+
+        # Outer sharp container
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + total_h)],
+            fill=self.theme.panel_recessed,
+            outline=self.theme.border_color,
+            width=1,
+        )
+
+        # Axis header strip
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + axis_h)],
+            fill=self.theme.panel_bg,
+        )
+        draw.rectangle([(x, y + axis_h), (x + self.content_width, y + axis_h)], fill=self.theme.border_color)
+
+        _draw_text_vcenter(
+            draw, x + 10, y, axis_h, "KANAVA", self.font_table_header, self.theme.text_muted
+        )
+        start_lbl = sanitize_for_pil(element.start_label)
+        end_lbl = sanitize_for_pil(element.end_label)
+        if start_lbl:
+            _draw_text_vcenter(
+                draw, track_x, y, axis_h, start_lbl, self.font_mono_bold, self.theme.text_secondary
+            )
+        if end_lbl:
+            ew = _get_text_width(draw, end_lbl, self.font_mono_bold)
+            _draw_text_vcenter(
+                draw, track_x + track_w - ew, y, axis_h, end_lbl, self.font_mono_bold, self.theme.text_secondary
+            )
+
+        # Quarter guide lines across all rows
+        rows_top = y + axis_h + 1
+        rows_bot = y + total_h - 4
+        for frac in (0.25, 0.5, 0.75):
+            gx = track_x + int(track_w * frac)
+            draw.line([(gx, rows_top), (gx, rows_bot)], fill=self.theme.border_color, width=1)
+
+        # Draw row backgrounds first, then subtle NOW background line, then text & bars on top
+        curr_y = rows_top + 2
+        for idx, _item in enumerate(element.items):
+            if idx % 2 == 1:
+                draw.rectangle(
+                    [(x + 1, curr_y), (x + self.content_width - 1, curr_y + row_h - 1)],
+                    fill=_blend_hex(self.theme.panel_recessed, self.theme.panel_bg, 0.45),
+                )
+            curr_y += row_h
+
+        now_color = "#22c55e"
+        nx: int | None = None
+        if element.now_fraction is not None:
+            nf = max(0.0, min(1.0, element.now_fraction))
+            nx = track_x + int(track_w * nf)
+            # Subtle guide line behind text so titles remain 100% legible
+            draw.line(
+                [(nx, rows_top), (nx, rows_bot)],
+                fill=_blend_hex(self.theme.panel_recessed, now_color, 0.30),
+                width=1,
+            )
+
+        # Draw programme rows (text + bars)
+        curr_y = rows_top + 2
+        for idx, item in enumerate(element.items):
+            # Channel label column
+            ch_txt = _fit_text(draw, item.label, self.font_body_bold, label_col_w - 14)
+            _draw_text_vcenter(
+                draw, x + 10, curr_y, row_h, ch_txt, self.font_body_bold, self.theme.text_primary
+            )
+
+            # Top line above bar: Programme title (left) + time text (right)
+            time_txt = sanitize_for_pil(item.time_text)
+            time_w = _get_text_width(draw, time_txt, self.font_mono)
+            title_avail = max(40, track_w - time_w - 14)
+            title_txt = _fit_text(draw, item.title, self.font_body_bold, title_avail)
+            title_color = self.theme.text_primary if item.is_live else self.theme.text_secondary
+            _draw_text_ink(
+                draw, track_x, curr_y + 6, title_txt, self.font_body_bold, title_color
+            )
+            _draw_text_ink(
+                draw, track_x + track_w - time_w, curr_y + 7, time_txt, self.font_mono, self.theme.text_muted
+            )
+
+            # Timeline bar slot
+            bar_y = curr_y + 27
+            bar_h = 11
+            draw.rectangle(
+                [(track_x, bar_y), (track_x + track_w, bar_y + bar_h)],
+                fill=self.theme.card_bg,
+                outline=self.theme.border_color,
+                width=1,
+            )
+
+            sf = max(0.0, min(1.0, item.start_frac))
+            ef = max(sf, min(1.0, item.end_frac))
+            bx1 = track_x + int(track_w * sf)
+            bx2 = max(bx1 + 4, track_x + int(track_w * ef))
+            bx2 = min(bx2, track_x + track_w)
+
+            bar_color = item.color or ("#22c55e" if item.is_live else "#3b82f6")
+            if item.is_live:
+                draw.rectangle(
+                    [(bx1, bar_y), (bx2, bar_y + bar_h)],
+                    fill=_blend_hex(self.theme.card_bg, bar_color, 0.32),
+                    outline=bar_color,
+                    width=1,
+                )
+                if item.progress is not None:
+                    prog = max(0.0, min(1.0, item.progress))
+                    fill_end = bx1 + int((bx2 - bx1) * prog)
+                    if fill_end > bx1 + 2:
+                        draw.rectangle(
+                            [(bx1 + 1, bar_y + 1), (fill_end, bar_y + bar_h - 1)],
+                            fill=bar_color,
+                        )
+            else:
+                draw.rectangle(
+                    [(bx1, bar_y), (bx2, bar_y + bar_h)],
+                    fill=_blend_hex(self.theme.card_bg, bar_color, 0.55),
+                    outline=bar_color,
+                    width=1,
+                )
+
+            # Crisp bright NOW tick directly across each bar track (never cuts through text)
+            if nx is not None:
+                draw.rectangle(
+                    [(nx - 1, bar_y - 2), (nx + 1, bar_y + bar_h + 2)],
+                    fill=now_color,
+                )
+
+            curr_y += row_h
+
+        # Crisp NOW badge in axis header
+        if nx is not None:
+            now_lbl = sanitize_for_pil(element.now_label).upper()
+            if now_lbl:
+                nw = _get_text_width(draw, now_lbl, self.font_small_bold) + 8
+                nh = 16
+                tag_x = max(track_x, min(nx - nw // 2, track_x + track_w - nw))
+                tag_y = y + (axis_h - nh) // 2
+                draw.rectangle([(tag_x, tag_y), (tag_x + nw, tag_y + nh)], fill=now_color)
+                _draw_text_vcenter(draw, tag_x + 4, tag_y, nh, now_lbl, self.font_small_bold, "#08120c")
+
+        return y + total_h
+
+    def _draw_bar_list_element(
+        self, draw: ImageDraw.ImageDraw, element: BarListElement, x: int, y: int
+    ) -> int:
+        if not element.items:
+            return y
+
+        total_h = self._measure_bar_list_element(draw, element)
+        max_val = element.max_value
+        if max_val is None or max_val <= 0:
+            max_val = max((max(0.0, it.value) for it in element.items), default=1.0) or 1.0
+
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + total_h)],
+            fill=self.theme.panel_recessed,
+            outline=self.theme.border_color,
+            width=1,
+        )
+
+        row_h = 48
+        inner_x = x + 12
+        inner_w = self.content_width - 24
+        curr_y = y + 6
+
+        for idx, item in enumerate(element.items):
+            bar_color = item.color or self.card.accent_color or self.theme.accent_color
+            val_txt = sanitize_for_pil(item.value_text)
+            val_w = _get_text_width(draw, val_txt, self.font_mono_bold)
+
+            left_x = inner_x
+            if element.show_rank:
+                rank_txt = f"#{idx + 1}"
+                rw, _ = _draw_text_ink(
+                    draw, left_x, curr_y + 4, rank_txt, self.font_mono_bold, self.theme.text_muted
+                )
+                left_x += rw + 10
+
+            badge_w = 0
+            if item.badge:
+                bw, _ = _measure_badge(draw, item.badge, self.font_small_bold)
+                badge_w = bw + 8
+
+            sub_txt = sanitize_for_pil(item.subtext or "")
+            sub_w = _get_text_width(draw, f" • {sub_txt}", self.font_small) if sub_txt else 0
+            lbl_max = max(40, (inner_x + inner_w) - left_x - val_w - badge_w - sub_w - 12)
+            lbl_txt = _fit_text(draw, item.label, self.font_body_bold, lbl_max)
+            lw, _ = _draw_text_ink(
+                draw, left_x, curr_y + 4, lbl_txt, self.font_body_bold, self.theme.text_primary
+            )
+
+            badge_x = left_x + lw + 8
+            if item.badge:
+                bw, _ = _draw_sharp_badge(
+                    draw, item.badge, badge_x, curr_y + 1, self.font_small_bold
+                )
+                badge_x += bw + 8
+
+            if sub_txt:
+                avail_sub = (inner_x + inner_w) - badge_x - val_w - 10
+                if avail_sub > 30:
+                    fitted_sub = _fit_text(draw, sub_txt, self.font_small, avail_sub)
+                    _draw_text_ink(
+                        draw, badge_x, curr_y + 6, fitted_sub, self.font_small, self.theme.text_muted
+                    )
+
+            _draw_text_ink(
+                draw,
+                inner_x + inner_w - val_w,
+                curr_y + 4,
+                val_txt,
+                self.font_mono_bold,
+                self.theme.text_primary,
+            )
+
+            # Horizontal comparison bar
+            bar_y = curr_y + 28
+            bar_h = 9
+            draw.rectangle(
+                [(inner_x, bar_y), (inner_x + inner_w, bar_y + bar_h)],
+                fill=self.theme.card_bg,
+                outline=self.theme.border_color,
+                width=1,
+            )
+            frac = max(0.0, min(1.0, item.value / max_val))
+            fw = int(inner_w * frac)
+            if fw > 0:
+                draw.rectangle([(inner_x + 1, bar_y + 1), (inner_x + max(3, fw), bar_y + bar_h - 1)], fill=bar_color)
+
+            curr_y += row_h
+
+        return y + total_h
+
+    def _draw_range_bar_element(
+        self, draw: ImageDraw.ImageDraw, element: RangeBarElement, x: int, y: int
+    ) -> int:
+        h = 56
+        accent = element.color or self.card.accent_color or self.theme.accent_color
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + h)],
+            fill=self.theme.panel_recessed,
+            outline=self.theme.border_color,
+            width=1,
+        )
+
+        inner_x = x + 12
+        inner_w = self.content_width - 24
+        _draw_text_ink(
+            draw, inner_x, y + 8, sanitize_for_pil(element.label), self.font_body_bold, self.theme.text_secondary
+        )
+        if element.current_label:
+            cur = sanitize_for_pil(element.current_label)
+            cw = _get_text_width(draw, cur, self.font_mono_bold)
+            _draw_text_ink(
+                draw, inner_x + inner_w - cw, y + 8, cur, self.font_mono_bold, self.theme.text_primary
+            )
+
+        bar_y = y + 28
+        bar_h = 8
+        track_fill = element.track_color or self.theme.card_bg
+        draw.rectangle(
+            [(inner_x, bar_y), (inner_x + inner_w, bar_y + bar_h)],
+            fill=track_fill,
+            outline=self.theme.border_color,
+            width=1,
+        )
+        frac = max(0.0, min(1.0, element.value_frac))
+        fill_x = inner_x + int(inner_w * frac)
+        if fill_x > inner_x + 1:
+            draw.rectangle([(inner_x + 1, bar_y + 1), (fill_x, bar_y + bar_h - 1)], fill=accent)
+
+        # Sharp vertical marker
+        marker_x = max(inner_x + 2, min(inner_x + inner_w - 2, fill_x))
+        draw.rectangle(
+            [(marker_x - 2, bar_y - 3), (marker_x + 2, bar_y + bar_h + 3)],
+            fill=self.theme.text_primary,
+        )
+
+        # Start and end labels below track
+        s_lbl = sanitize_for_pil(element.start_label)
+        e_lbl = sanitize_for_pil(element.end_label)
+        _draw_text_ink(draw, inner_x, y + 40, s_lbl, self.font_small, self.theme.text_muted)
+        ew = _get_text_width(draw, e_lbl, self.font_small)
+        _draw_text_ink(
+            draw, inner_x + inner_w - ew, y + 40, e_lbl, self.font_small, self.theme.text_muted
+        )
+        return y + h
+
+    def _draw_callout_element(
+        self, draw: ImageDraw.ImageDraw, element: CalloutElement, x: int, y: int
+    ) -> int:
+        h = self._measure_callout_element(draw, element)
+        accent = element.color or _tone_color(element.tone, self.theme)
+        bg = _blend_hex(self.theme.panel_recessed, accent, 0.09)
+
+        draw.rectangle(
+            [(x, y), (x + self.content_width, y + h)],
+            fill=bg,
+            outline=self.theme.border_color,
+            width=1,
+        )
+        draw.rectangle([(x, y), (x + 3, y + h)], fill=accent)
+
+        inner_x = x + 14
+        inner_w = self.content_width - 28
+        curr_y = y + 10
+        if element.title:
+            title_txt = _fit_text(draw, element.title, self.font_body_bold, inner_w)
+            _draw_text_ink(draw, inner_x, curr_y, title_txt, self.font_body_bold, accent)
+            curr_y += _line_advance(draw, self.font_body_bold, extra=4)
+
+        lines = _wrap_text(draw, element.text, self.font_body, inner_w)
+        adv = _line_advance(draw, self.font_body, extra=4)
+        for line in lines:
+            _draw_text_ink(draw, inner_x, curr_y, line, self.font_body, self.theme.text_primary)
+            curr_y += adv
+
+        return y + h
 
     def _draw_image_element(
         self,
@@ -855,11 +1674,8 @@ class CardRenderer:
                 outline=self.theme.border_color,
                 width=1,
             )
-            draw.text(
-                (x + 8, y + 14),
-                "Kuvaa ei voitu näyttää",
-                fill=self.theme.text_muted,
-                font=self.font_small,
+            _draw_text_vcenter(
+                draw, x + 12, y, box_h, "Kuvaa ei voitu näyttää", self.font_small, self.theme.text_muted
             )
             y += box_h
         else:
@@ -895,36 +1711,32 @@ class CardRenderer:
                     outline=self.theme.border_color,
                     width=1,
                 )
-                draw.text(
-                    (x + 8, y + 14),
-                    "Kuvaa ei voitu näyttää",
-                    fill=self.theme.text_muted,
-                    font=self.font_small,
+                _draw_text_vcenter(
+                    draw, x + 12, y, 48, "Kuvaa ei voitu näyttää", self.font_small, self.theme.text_muted
                 )
                 y += 48
             else:
-                # Sharp border around photo (NO rounded corners)
                 draw.rectangle(
                     [(x_offset, y), (x_offset + disp_w, y + disp_h)],
-                    outline=self.theme.border_color,
+                    outline=self.theme.border_bright,
                     width=1,
                 )
                 y += disp_h
 
         if element.caption:
             cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+            adv = _line_advance(draw, self.font_small, extra=3)
             y += 6
             for line in cap_lines:
                 lw = _get_text_width(draw, line, self.font_small)
                 tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
-                draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
-                y += _get_text_height(draw, line, self.font_small) + 2
+                _draw_text_ink(draw, tx, y, line, self.font_small, self.theme.text_muted)
+                y += adv
         return y
 
     def _paste_cell_image(
         self, img: Image.Image, image_bytes: bytes, abs_x: int, abs_y: int, disp_w: int, disp_h: int
     ) -> bool:
-        """Paste and resize a single cell image. Returns True on success."""
         try:
             with Image.open(BytesIO(image_bytes)) as pil_img:
                 try:
@@ -953,22 +1765,21 @@ class CardRenderer:
     def _draw_grid_label(
         self, draw: ImageDraw.ImageDraw, abs_x: int, abs_y: int, label: str
     ) -> None:
-        """Draw a small sharp angle-number badge at the cell top-left."""
-        text = str(label).strip()
+        text = sanitize_for_pil(str(label)).strip()
         if not text:
             return
-        pad_h, pad_v = 5, 2
+        pad_h, pad_v = 6, 3
         text_w = _get_text_width(draw, text, self.font_small_bold)
-        text_h = _get_text_height(draw, text, self.font_small_bold)
+        text_h = _get_text_height(draw, "ÄG", self.font_small_bold)
         box_w, box_h = text_w + pad_h * 2, text_h + pad_v * 2
-        bx, by = abs_x + 4, abs_y + 4
+        bx, by = abs_x + 6, abs_y + 6
         draw.rectangle(
             [(bx, by), (bx + box_w, by + box_h)],
-            fill=self.theme.panel_bg,
-            outline=self.theme.border_color,
+            fill=self.theme.panel_recessed,
+            outline=self.theme.border_bright,
             width=1,
         )
-        draw.text((bx + pad_h, by + pad_v), text, fill=self.theme.text_primary, font=self.font_small_bold)
+        _draw_text_vcenter(draw, bx + pad_h, by, box_h, text, self.font_small_bold, self.theme.text_primary)
 
     def _draw_image_grid_element(
         self,
@@ -978,16 +1789,16 @@ class CardRenderer:
         x: int,
         y: int,
     ) -> int:
-        """Draw up to 2x2 photo grid with sharp borders and angle labels."""
         images = list(element.images or [])[:4]
         if not images:
             if element.caption:
                 cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+                adv = _line_advance(draw, self.font_small, extra=3)
                 for line in cap_lines:
                     lw = _get_text_width(draw, line, self.font_small)
                     tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
-                    draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
-                    y += _get_text_height(draw, line, self.font_small) + 2
+                    _draw_text_ink(draw, tx, y, line, self.font_small, self.theme.text_muted)
+                    y += adv
             return y
 
         sizes = [_probe_image_size(b) for b in images]
@@ -1006,17 +1817,13 @@ class CardRenderer:
                     outline=self.theme.border_color,
                     width=1,
                 )
-                draw.text(
-                    (abs_x + 8, abs_y + 12),
-                    "Kuvaa ei voitu näyttää",
-                    fill=self.theme.text_muted,
-                    font=self.font_small,
+                _draw_text_vcenter(
+                    draw, abs_x + 10, abs_y, disp_h, "Kuvaa ei voitu näyttää", self.font_small, self.theme.text_muted
                 )
             else:
-                # Sharp border around each photo (NO rounded corners)
                 draw.rectangle(
                     [(abs_x, abs_y), (abs_x + disp_w, abs_y + disp_h)],
-                    outline=self.theme.border_color,
+                    outline=self.theme.border_bright,
                     width=1,
                 )
             if idx < len(labels) and labels[idx]:
@@ -1026,12 +1833,13 @@ class CardRenderer:
 
         if element.caption:
             cap_lines = _wrap_text(draw, element.caption, self.font_small, self.content_width)
+            adv = _line_advance(draw, self.font_small, extra=3)
             y += 6
             for line in cap_lines:
                 lw = _get_text_width(draw, line, self.font_small)
                 tx = x + (self.content_width - lw) // 2 if lw < self.content_width else x
-                draw.text((tx, y), line, fill=self.theme.text_muted, font=self.font_small)
-                y += _get_text_height(draw, line, self.font_small) + 2
+                _draw_text_ink(draw, tx, y, line, self.font_small, self.theme.text_muted)
+                y += adv
         return y
 
 
@@ -1055,7 +1863,6 @@ def render_text_card(
     if badge:
         card.set_badge(badge, color=badge_color)
 
-    # Process text paragraphs / code blocks
     lines = text.splitlines()
     in_code_block = False
     code_lines: list[str] = []
@@ -1097,7 +1904,7 @@ def render_text_card(
 def render_table_card(
     title: str,
     headers: list[str],
-    rows: list[list[str]],
+    rows: list[list[str | Badge]],
     subtitle: str | None = None,
     badge: str | None = None,
     badge_color: str = "blue",

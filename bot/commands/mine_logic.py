@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from bot.config import CraftyConfig
-from bot.rendering import Badge, BadgeColor, Card
+from bot.rendering import Badge, BadgeColor, BarItem, Card, StatTile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -728,6 +728,22 @@ def _resolve_servers(
     return servers, None
 
 
+def _cpu_color(cpu_pct: float) -> str:
+    if cpu_pct >= 85.0:
+        return "#ef4444"
+    if cpu_pct >= 60.0:
+        return "#eab308"
+    return "#38bdf8"
+
+
+def _ram_color(mem_pct: float) -> str:
+    if mem_pct >= 88.0:
+        return "#ef4444"
+    if mem_pct >= 70.0:
+        return "#eab308"
+    return "#a855f7"
+
+
 def build_mine_info_card(
     title: str,
     text: str,
@@ -736,17 +752,18 @@ def build_mine_info_card(
     subtitle: str | None = None,
 ) -> Card:
     """Build a simple informational Card for errors, notices, and help."""
+    tone = "error" if str(badge_color).lower().endswith("red") else "info"
     return (
         Card(title=title, subtitle=subtitle, footer="Crafty Controller • P-iv-Botti")
         .set_badge(badge_text, badge_color)
-        .add_text(text)
+        .add_callout(text, tone=tone)
     )
 
 
 def build_mine_status_card(
     servers_data: list[tuple[dict[str, Any], dict[str, Any], list[str]]],
 ) -> Card:
-    """Build a rich Card for Minecraft server(s) status."""
+    """Build a rich HUD Card for Minecraft server(s) status."""
     if not servers_data:
         return build_mine_info_card(
             "Minecraft Palvelimet",
@@ -788,11 +805,11 @@ def build_mine_status_card(
         is_starting = (not is_running) and (status_lower in ("starting", "restarting", "käynnistyy"))
 
         if is_running:
-            badge_label, badge_color = "ONLINE", BadgeColor.GREEN
+            badge_label, badge_color, accent = "ONLINE", BadgeColor.GREEN, "#22c55e"
         elif is_starting:
-            badge_label, badge_color = "KÄYNNISTYY", BadgeColor.YELLOW
+            badge_label, badge_color, accent = "KÄYNNISTYY", BadgeColor.YELLOW, "#eab308"
         else:
-            badge_label, badge_color = "OFFLINE", BadgeColor.RED
+            badge_label, badge_color, accent = "OFFLINE", BadgeColor.RED, "#ef4444"
 
         port = (
             server.get("server_port")
@@ -828,7 +845,12 @@ def build_mine_status_card(
         sub_title = " • ".join(sub_parts) if sub_parts else None
 
         card = (
-            Card(title=str(raw_name), subtitle=sub_title, footer="Crafty Controller • P-iv-Botti")
+            Card(
+                title=str(raw_name),
+                subtitle=sub_title,
+                footer="Crafty Controller • P-iv-Botti",
+                accent_color=accent,
+            )
             .set_badge(badge_label, badge_color)
         )
 
@@ -856,20 +878,28 @@ def build_mine_status_card(
             p_disp = "0"
 
         status_disp = "Päällä" if is_running else ("Käynnistyy" if is_starting else "Pois päältä")
-        card.add_key_value("Tila", status_disp)
-        card.add_key_value("Pelaajat", p_disp)
+        tiles: list[StatTile] = [
+            StatTile("Tila", status_disp, accent_color=accent),
+            StatTile("Pelaajat", p_disp, accent_color="#38bdf8"),
+        ]
+        if is_running and version:
+            tiles.append(StatTile("Versio", str(version), accent_color="#a855f7"))
+        if port:
+            tiles.append(StatTile("Portti", str(port), accent_color="#64748b"))
+        card.add_stat_grid(tiles, columns=min(4, max(2, len(tiles))))
 
         if is_running:
-            if version:
-                card.add_key_value("Versio", str(version))
-            if port and not sub_title:
-                card.add_key_value("Portti", str(port))
-
             cpu = stats.get("cpu")
             if cpu is not None:
                 try:
-                    cpu_float = float(cpu)
-                    card.add_progress_bar("CPU", value=round(cpu_float, 1), max_value=100.0, unit="%", color="#38bdf8")
+                    cpu_float = round(float(cpu), 1)
+                    card.add_progress_bar(
+                        "CPU",
+                        value=cpu_float,
+                        max_value=100.0,
+                        unit="%",
+                        color=_cpu_color(cpu_float),
+                    )
                 except (ValueError, TypeError):
                     card.add_key_value("CPU", str(cpu))
 
@@ -878,9 +908,15 @@ def build_mine_status_card(
             formatted_mem = _format_memory(mem_usage)
             if mem_percent is not None:
                 try:
-                    mem_float = float(mem_percent)
-                    label = f"RAM ({formatted_mem})" if formatted_mem else "RAM"
-                    card.add_progress_bar(label, value=round(mem_float, 1), max_value=100.0, unit="%", color="#a855f7")
+                    mem_float = round(float(mem_percent), 1)
+                    card.add_progress_bar(
+                        "RAM",
+                        value=mem_float,
+                        max_value=100.0,
+                        unit="%",
+                        color=_ram_color(mem_float),
+                        sublabel=formatted_mem or None,
+                    )
                 except (ValueError, TypeError):
                     if formatted_mem:
                         card.add_key_value("RAM", formatted_mem)
@@ -888,22 +924,25 @@ def build_mine_status_card(
                 card.add_key_value("RAM", formatted_mem)
 
         if player_names:
-            card.add_divider()
-            rows = [[str(i + 1), name] for i, name in enumerate(player_names)]
+            card.add_section("PAIKALLA OLEVAT PELAAJAT", right_text=p_disp)
+            rows: list[list[str | Badge]] = [
+                [str(i + 1), name] for i, name in enumerate(player_names)
+            ]
             card.add_table(
                 headers=["#", "Pelaaja"],
                 rows=rows,
-                col_widths=[1, 6],
+                col_widths=[0.6, 5.4],
                 primary_col=1,
                 bold_cols=[1],
+                mono_cols=[0],
                 max_rows=10,
                 overflow="ellipsis",
             )
         elif count_val == 0 and is_running:
-            card.add_text("Ei pelaajia paikalla (aavemaisen hiljaista).", muted=True)
+            card.add_callout("Ei pelaajia paikalla (aavemaisen hiljaista).", tone="info")
 
         if motd and str(motd).strip() != str(raw_name).strip() and str(motd).strip() != str(world).strip():
-            card.add_text(f"Kuvaus: {motd}", muted=True)
+            card.add_callout(str(motd), title="Kuvaus", tone="info")
 
         return card
 
@@ -929,13 +968,12 @@ def build_mine_status_card(
             title="Minecraft Palvelimet",
             subtitle=f"{len(servers_data)} palvelinta",
             footer="Crafty Controller • P-iv-Botti",
+            accent_color="#22c55e" if any_running else "#ef4444",
         )
         .set_badge("ONLINE" if any_running else "OFFLINE", BadgeColor.GREEN if any_running else BadgeColor.RED)
     )
 
-    for idx, (server, stats, online_player_names) in enumerate(servers_data):
-        if idx > 0:
-            card.add_divider()
+    for server, stats, online_player_names in servers_data:
         server_id = server.get("server_id") or server.get("server_uuid") or server.get("id") or stats.get("server_id") or "?"
         raw_name = server.get("server_name") or server.get("name") or stats.get("server_name") or f"Palvelin {server_id}"
 
@@ -972,16 +1010,14 @@ def build_mine_status_card(
         p_disp = f"{count_val} / {max_players}" if max_players is not None else str(count_val)
         version = stats.get("version") or server.get("version") or stats.get("server_version") or server.get("server_version")
 
-        card.add_text(str(raw_name), bold=True)
+        card.add_section(str(raw_name), right_text=f"v{version}" if version else None)
         items: list[tuple[str, str | Badge]] = [
             ("Tila", s_badge),
             ("Pelaajat", p_disp),
         ]
-        if version:
-            items.append(("Versio", str(version)))
-        card.add_key_values(items, columns=2)
         if player_names:
-            card.add_text(f"Pelaajat: {', '.join(player_names)}")
+            items.append(("Paikalla", ", ".join(player_names)))
+        card.add_key_values(items, columns=2 if not player_names else 3)
 
     return card
 
@@ -1746,73 +1782,119 @@ def _format_server_player_stats(server_name: str, stats: list[PlayerStatInfo]) -
 
 
 def build_mine_single_player_stat_card(stat: PlayerStatInfo, server_name: str) -> Card:
-    """Build a rich Card for a single player profile."""
+    """Build a high-signal HUD Card for a single player profile."""
+    if stat.is_online:
+        badge_text, badge_color, accent = "PAIKALLA", BadgeColor.GREEN, "#22c55e"
+        session_str = _format_duration(stat.current_session_seconds)
+        session_sub = f"istunto {session_str}"
+    else:
+        badge_text, badge_color, accent = "OFFLINE", BadgeColor.GRAY, "#64748b"
+        session_sub = "poissa linjoilta"
+
     card = Card(
         title=stat.name,
         subtitle=f"Minecraft • {server_name}",
         footer=f"{server_name} • P-iv-Botti Minecraft",
-    )
-    if stat.is_online:
-        card.set_badge("PAIKALLA", BadgeColor.GREEN)
-        session_str = _format_duration(stat.current_session_seconds)
-        status_disp = f"Paikalla (istunto {session_str})"
-    else:
-        card.set_badge("OFFLINE", BadgeColor.GRAY)
-        status_disp = "Poissa linjoilta"
+        accent_color=accent,
+    ).set_badge(badge_text, badge_color)
 
-    card.add_key_value("Tila", status_disp)
-    card.add_key_value("Rooli", stat.role or "Pelaaja")
-    card.add_key_value("Peliaika", _format_duration(stat.total_playtime_seconds))
-    card.add_key_value("Istunnot", f"{stat.session_count} kpl")
-    card.add_key_value("Kuolemat", f"{stat.deaths} kpl")
-    card.add_key_value("Chat", f"{stat.chat_count} viestiä" if stat.chat_count > 0 else "0")
+    card.add_stat_grid(
+        [
+            StatTile("Peliaika", _format_duration(stat.total_playtime_seconds), subtext=session_sub, accent_color=accent),
+            StatTile("Istunnot", f"{stat.session_count} kpl", accent_color="#38bdf8"),
+            StatTile("Kuolemat", f"{stat.deaths} kpl", accent_color="#ef4444" if stat.deaths > 0 else "#64748b"),
+            StatTile("Chat", f"{stat.chat_count}" if stat.chat_count > 0 else "0", subtext="viestiä", accent_color="#a855f7"),
+        ],
+        columns=4,
+    )
+
+    kv_items: list[tuple[str, str | Badge]] = [
+        ("Rooli", stat.role or "Pelaaja"),
+    ]
     if stat.first_seen:
-        card.add_key_value("Ensikäynti", stat.first_seen)
+        kv_items.append(("Ensikäynti", stat.first_seen))
     if stat.last_seen:
-        card.add_key_value("Viimeksi", stat.last_seen)
+        kv_items.append(("Viimeksi", stat.last_seen))
     if stat.xuid:
-        card.add_key_value("XUID", str(stat.xuid))
+        kv_items.append(("XUID", str(stat.xuid)))
+    card.add_key_values(kv_items, columns=2)
 
     if stat.death_causes:
-        card.add_divider()
-        card.add_text(f"Kuolinsyyt: {_format_death_causes(stat.death_causes)}")
+        counts: dict[str, int] = {}
+        for c in stat.death_causes:
+            cleaned = c.strip()
+            if cleaned:
+                counts[cleaned] = counts.get(cleaned, 0) + 1
+        if counts:
+            sorted_causes = sorted(counts.items(), key=lambda it: it[1], reverse=True)[:6]
+            bar_items = [
+                BarItem(label=cause, value=float(cnt), value_text=f"{cnt}x", color="#ef4444")
+                for cause, cnt in sorted_causes
+            ]
+            card.add_section("KUOLINSYYT", right_text=f"{stat.deaths} kpl", accent_color="#ef4444")
+            card.add_bar_list(bar_items)
 
     return card
 
 
 def build_mine_server_player_stats_card(server_name: str, stats: list[PlayerStatInfo]) -> Card:
-    """Build a rich Card overview of all player stats on a server."""
+    """Build a high-signal HUD overview of all player stats on a server."""
+    online_count = sum(1 for s in stats if s.is_online)
     card = Card(
         title="Minecraft Pelaajatilastot",
         subtitle=f"Palvelin: {server_name} • {len(stats)} pelaajaa",
         footer=f"{server_name} • P-iv-Botti Minecraft",
+        accent_color="#22c55e" if online_count > 0 else "#38bdf8",
     )
     if not stats:
         card.set_badge("TYHJÄ", BadgeColor.GRAY)
-        card.add_text("Ei vielä tallennettuja pelaajatilastoja tai lokitapahtumia.", muted=True)
+        card.add_callout("Ei vielä tallennettuja pelaajatilastoja tai lokitapahtumia.", tone="info")
         return card
 
     card.set_badge(f"{len(stats)} PELAAJAA", BadgeColor.BLUE)
-    rows = []
-    for s in stats:
-        role_tag = f" ({s.role})" if s.role and s.role != "Pelaaja" else ""
-        p_name = f"{s.name}{role_tag}"
-        status_str = "Paikalla" if s.is_online else "Poissa"
-        playtime_str = _format_duration(s.total_playtime_seconds)
-        deaths_str = str(s.deaths)
-        last_seen_str = s.last_seen or "-"
-        rows.append([p_name, status_str, playtime_str, deaths_str, last_seen_str])
 
-    card.add_table(
-        headers=["Pelaaja", "Tila", "Peliaika", "Kuolemat", "Viimeksi"],
-        rows=rows,
-        alignments=["left", "left", "right", "right", "left"],
-        col_widths=[2.2, 1.2, 1.8, 1.2, 2.0],
-        primary_col=0,
-        bold_cols=[0, 2],
-        max_rows=25,
-        overflow="ellipsis",
+    total_playtime_sec = sum(max(0, s.total_playtime_seconds) for s in stats)
+    total_deaths = sum(max(0, s.deaths) for s in stats)
+    card.add_stat_grid(
+        [
+            StatTile("Pelaajia", str(len(stats)), accent_color="#38bdf8"),
+            StatTile("Paikalla nyt", str(online_count), accent_color="#22c55e" if online_count > 0 else "#64748b"),
+            StatTile("Yht. peliaika", _format_duration(total_playtime_sec), accent_color="#a855f7"),
+            StatTile("Kuolemat yht.", str(total_deaths), accent_color="#ef4444"),
+        ],
+        columns=4,
     )
+
+    ranked = sorted(
+        stats,
+        key=lambda s: (-s.total_playtime_seconds, not s.is_online, s.name.casefold()),
+    )
+    shown = ranked[:15]
+    bar_items: list[BarItem] = []
+    for s in shown:
+        role_tag = f" ({s.role})" if s.role and s.role != "Pelaaja" else ""
+        badge = Badge("PAIKALLA", BadgeColor.GREEN) if s.is_online else Badge("POISSA", BadgeColor.GRAY)
+        sub_parts: list[str] = []
+        if s.deaths > 0:
+            sub_parts.append(f"{s.deaths} kuolemaa")
+        if s.last_seen:
+            sub_parts.append(f"viimeksi {s.last_seen}")
+        bar_items.append(
+            BarItem(
+                label=f"{s.name}{role_tag}",
+                value=float(max(1, s.total_playtime_seconds)),
+                value_text=_format_duration(s.total_playtime_seconds),
+                subtext=" • ".join(sub_parts) if sub_parts else None,
+                color="#22c55e" if s.is_online else "#38bdf8",
+                badge=badge,
+            )
+        )
+
+    card.add_section("PELIAIKA-VERTAILU", right_text=f"Top {len(shown)}")
+    card.add_bar_list(bar_items, show_rank=True)
+    if len(ranked) > len(shown):
+        card.add_text(f"… (+{len(ranked) - len(shown)} muuta pelaajaa)", muted=True)
+
     return card
 
 

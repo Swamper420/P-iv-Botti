@@ -4,7 +4,7 @@ import html
 import re
 from typing import TYPE_CHECKING
 
-from bot.rendering import Badge, BadgeColor, Card
+from bot.rendering import Badge, BadgeColor, Card, StatTile
 
 if TYPE_CHECKING:
     from bot.config import MumbleConfig
@@ -191,26 +191,38 @@ def format_user_details(user: MumbleUserInfo, server_name: str) -> str:
     return "\n".join(lines)
 
 
+def _mumble_status_badge(user: MumbleUserInfo) -> Badge:
+    if user.is_deafened or user.is_self_deafened:
+        return Badge("DEAF", BadgeColor.RED)
+    if user.is_muted or user.is_self_muted:
+        return Badge("MUTE", BadgeColor.YELLOW)
+    if user.is_recording:
+        return Badge("REC", BadgeColor.RED)
+    if user.is_priority_speaker:
+        return Badge("PRIO", BadgeColor.PURPLE)
+    return Badge("ÄÄNESSÄ", BadgeColor.GREEN)
+
+
 def build_mumble_summary_card(
     snapshot: MumbleServerSnapshot, config: MumbleConfig
 ) -> Card:
-    """Builds a rich structured Card for Mumble server overview."""
+    """Builds a channel-grouped HUD Card for Mumble server overview."""
     server_name = snapshot.server_name or config.host or "Mumble"
     server_host = f"{config.host}:{config.port}" if config.host else "Mumble"
 
     if not config.is_configured:
         return (
-            Card(title="Mumble", subtitle=server_host, footer="P-iv-Botti Mumble")
+            Card(title="Mumble", subtitle=server_host, footer="P-iv-Botti Mumble", accent_color="#64748b")
             .set_badge("EI KÄYTÖSSÄ", BadgeColor.GRAY)
-            .add_text("Mumble ei ole käytössä. Aseta MUMBLE_HOST .env-tiedostoon.", muted=True)
+            .add_callout("Mumble ei ole käytössä. Aseta MUMBLE_HOST .env-tiedostoon.", tone="warning")
         )
 
     if not snapshot.is_connected:
         err_msg = f" ({snapshot.error_message})" if snapshot.error_message else ""
         return (
-            Card(title=f"Mumble: {server_name}", subtitle=server_host, footer="P-iv-Botti Mumble")
+            Card(title=f"Mumble: {server_name}", subtitle=server_host, footer="P-iv-Botti Mumble", accent_color="#ef4444")
             .set_badge("OFFLINE", BadgeColor.RED)
-            .add_text(f"Ei yhteyttä Mumble-palvelimeen{err_msg}. Yhdistetään uudelleen...")
+            .add_callout(f"Ei yhteyttä Mumble-palvelimeen{err_msg}. Yhdistetään uudelleen...", tone="error")
         )
 
     total_users = len(snapshot.active_users)
@@ -222,70 +234,109 @@ def build_mumble_summary_card(
             title=f"Mumble: {server_name}",
             subtitle=server_host,
             footer=f"Kanavia: {len(snapshot.channels)} • P-iv-Botti Mumble",
+            accent_color="#22c55e" if total_users > 0 else "#64748b",
         )
         .set_badge(badge_label, badge_color)
     )
 
     if total_users == 0:
-        card.add_text("Ei käyttäjiä kanavilla.", muted=True)
+        card.add_callout("Ei käyttäjiä kanavilla.", tone="info")
         return card
 
-    rows: list[list[str]] = []
-    for u in sorted(snapshot.active_users, key=lambda x: x.name.lower()):
-        tags: list[str] = []
-        if u.is_deafened or u.is_self_deafened:
-            tags.append("[DEAF]")
-        elif u.is_muted or u.is_self_muted:
-            tags.append("[MUTE]")
-        if u.is_recording:
-            tags.append("[REC]")
-        if u.is_priority_speaker:
-            tags.append("[PRIO]")
+    # Group users by channel
+    channels_with_users: dict[int, list[MumbleUserInfo]] = {}
+    for user in snapshot.active_users:
+        channels_with_users.setdefault(user.channel_id, []).append(user)
 
-        tag_str = f" {' '.join(tags)}" if tags else ""
-        ch_info = snapshot.channels.get(u.channel_id)
-        ch_name = ch_info.name if ch_info else f"Kanava {u.channel_id}"
+    def _channel_sort_key(ch_id: int) -> tuple[str, int]:
+        ch_info = snapshot.channels.get(ch_id)
+        name = ch_info.name if ch_info else f"Kanava {ch_id}"
+        return (name.casefold(), ch_id)
 
-        time_str = format_duration(u.online_seconds)
-        if u.idle_seconds is not None and u.idle_seconds >= 60:
-            time_str += f" (idle {format_duration(u.idle_seconds)})"
+    for ch_id in sorted(channels_with_users.keys(), key=_channel_sort_key):
+        users = channels_with_users[ch_id]
+        ch_info = snapshot.channels.get(ch_id)
+        ch_name = ch_info.name if ch_info else f"Kanava {ch_id}"
+        card.add_section(ch_name, right_text=f"{len(users)} hlö")
 
-        ping_str = f"{u.ping_ms:.0f} ms" if u.ping_ms is not None else "-"
-        rows.append([f"{u.name}{tag_str}", ch_name, time_str, ping_str])
+        rows: list[list[str | Badge]] = []
+        for u in sorted(users, key=lambda x: x.name.lower()):
+            time_str = format_duration(u.online_seconds)
+            if u.idle_seconds is not None and u.idle_seconds >= 60:
+                time_str += f" (idle {format_duration(u.idle_seconds)})"
+            ping_str = f"{u.ping_ms:.0f} ms" if u.ping_ms is not None else "-"
+            rows.append([u.name, _mumble_status_badge(u), time_str, ping_str])
 
-    card.add_table(
-        headers=["Käyttäjä", "Kanava", "Aika", "Viive"],
-        rows=rows,
-        alignments=["left", "left", "left", "right"],
-    )
+        card.add_table(
+            headers=["Käyttäjä", "Tila", "Aika", "Viive"],
+            rows=rows,
+            alignments=["left", "center", "right", "right"],
+            col_widths=[2.6, 1.3, 2.2, 1.0],
+            primary_col=0,
+            bold_cols=[0],
+            mono_cols=[2, 3],
+        )
+
     return card
 
 
 def build_mumble_user_card(user: MumbleUserInfo, server_name: str) -> Card:
-    """Builds a rich structured Card for a specific Mumble user."""
+    """Builds a high-signal telemetry Card for a specific Mumble user."""
+    if user.is_deafened:
+        badge_text, badge_color, accent = "KUULOKKEET POIS", BadgeColor.RED, "#ef4444"
+    elif user.is_muted:
+        badge_text, badge_color, accent = "MYKISTETTY", BadgeColor.YELLOW, "#eab308"
+    elif user.is_recording:
+        badge_text, badge_color, accent = "NAUHOITTAA", BadgeColor.RED, "#ef4444"
+    else:
+        badge_text, badge_color, accent = "ONLINE", BadgeColor.GREEN, "#22c55e"
+
     card = Card(
         title=f"Mumble: {user.name}",
         subtitle=f"Kanava: {user.channel_name}",
         footer=f"Palvelin: {server_name} • P-iv-Botti Mumble",
+        accent_color=accent,
+    ).set_badge(badge_text, badge_color)
+
+    ping_val = f"{user.ping_ms:.0f} ms" if user.ping_ms is not None else "-"
+    if user.ping_ms is None:
+        ping_accent = "#64748b"
+    elif user.ping_ms < 40:
+        ping_accent = "#22c55e"
+    elif user.ping_ms < 100:
+        ping_accent = "#eab308"
+    else:
+        ping_accent = "#ef4444"
+
+    bw_str = (
+        f"{user.bandwidth_kbps:.0f} kbps"
+        if user.bandwidth_kbps and user.bandwidth_kbps > 0
+        else "-"
     )
 
-    if user.is_deafened:
-        card.set_badge("KUULOKKEET POIS", BadgeColor.RED)
-    elif user.is_muted:
-        card.set_badge("MYKISTETTY", BadgeColor.YELLOW)
-    elif user.is_recording:
-        card.set_badge("NAUHOITTAA", BadgeColor.RED)
+    total_p = user.packets_good + user.packets_lost
+    if total_p > 0:
+        loss_pct = user.packets_lost / total_p * 100.0
+        loss_str = f"{loss_pct:.1f}%"
+        loss_accent = "#22c55e" if loss_pct < 1.0 else ("#eab308" if loss_pct < 5.0 else "#ef4444")
     else:
-        card.set_badge("ONLINE", BadgeColor.GREEN)
+        loss_str = "-"
+        loss_accent = "#64748b"
 
-    card.add_key_value("Paikallaoloaika", format_duration(user.online_seconds))
-    if user.idle_seconds is not None and user.idle_seconds >= 60:
-        card.add_key_value("Toimettomana (idle)", format_duration(user.idle_seconds))
-    else:
-        card.add_key_value("Toimettomana (idle)", "aktiivinen")
-
-    ping_val = f"{user.ping_ms:.1f} ms" if user.ping_ms is not None else "-"
-    card.add_key_value("Viive (ping)", ping_val)
+    idle_sub = (
+        f"idle {format_duration(user.idle_seconds)}"
+        if user.idle_seconds is not None and user.idle_seconds >= 60
+        else "aktiivinen"
+    )
+    card.add_stat_grid(
+        [
+            StatTile("Paikallaolo", format_duration(user.online_seconds), subtext=idle_sub, accent_color=accent),
+            StatTile("Viive (ping)", ping_val, accent_color=ping_accent),
+            StatTile("Kaista", bw_str, accent_color="#38bdf8"),
+            StatTile("Hävikki", loss_str, accent_color=loss_accent),
+        ],
+        columns=4,
+    )
 
     status_parts = []
     if user.is_deafened:
@@ -298,28 +349,21 @@ def build_mumble_user_card(user: MumbleUserInfo, server_name: str) -> Card:
         status_parts.append("Nauhoittaa")
     if user.is_priority_speaker:
         status_parts.append("Priority")
-    card.add_key_value("Tila", ", ".join(status_parts))
-
-    card.add_divider()
 
     client_desc = (
         f"{user.client_release} ({user.client_os})".strip()
         if user.client_os
         else user.client_release
     ) or "-"
-    card.add_key_value("Asiakasohjelma", client_desc)
 
-    bw_str = (
-        f"{user.bandwidth_kbps:.0f} kbps"
-        if user.bandwidth_kbps and user.bandwidth_kbps > 0
-        else "-"
-    )
-    card.add_key_value("Kaistanleveys", bw_str)
-
-    if user.packets_good > 0 or user.packets_lost > 0:
-        total_p = user.packets_good + user.packets_lost
-        loss_pct = (user.packets_lost / total_p * 100.0) if total_p > 0 else 0.0
-        card.add_key_value("Paketit", f"{user.packets_good} kpl ({loss_pct:.1f}% hävikki)")
+    kv_items: list[tuple[str, str | Badge]] = [
+        ("Kanava", user.channel_name),
+        ("Tila", ", ".join(status_parts)),
+        ("Asiakasohjelma", client_desc),
+    ]
+    if total_p > 0:
+        kv_items.append(("Paketit", f"{user.packets_good} ok / {user.packets_lost} hävikki"))
+    card.add_key_values(kv_items, columns=2)
 
     return card
 

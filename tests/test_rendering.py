@@ -5,22 +5,35 @@ from unittest.mock import patch
 from io import BytesIO
 from PIL import Image
 
+from bot.config import RenderingConfig
 from bot.rendering import (
     DARK_THEME,
     Badge,
     BadgeColor,
+    BarItem,
+    BarListElement,
+    CalloutElement,
     Card,
     CodeBlockElement,
     DividerElement,
+    HeroElement,
     KeyValuesElement,
     ProgressBarElement,
+    RangeBarElement,
+    SectionHeaderElement,
+    StatGridElement,
+    StatTile,
     TableElement,
     TextElement,
     Theme,
+    TimelineElement,
+    TimelineItem,
     render_card,
     render_table_card,
     render_text_card,
+    theme_from_config,
 )
+from bot.rendering.icons import draw_icon, sanitize_for_pil, weather_icon_name
 
 
 class RenderingTests(unittest.TestCase):
@@ -263,6 +276,102 @@ class RenderingTests(unittest.TestCase):
         card = Card(title="Kulmat").add_image_grid(imgs, labels=["1", "2"])
         with patch("PIL.ImageDraw.ImageDraw.rounded_rectangle") as mock_rounded:
             render_card(card)
+            mock_rounded.assert_not_called()
+
+    def test_new_hud_elements_and_no_rounded_corners(self) -> None:
+        """All new HUD elements render valid PNGs with strictly sharp corners."""
+        card = (
+            Card(title="HUD Testi", subtitle="Alateksti", footer="P-iv-Botti", accent_color="#22c55e")
+            .set_badge("LIVE", BadgeColor.GREEN)
+            .add_hero(
+                value="-4.2°C",
+                label="Lumisadetta",
+                subtext="Tuntuu kuin -9.8°C",
+                icon="snow",
+                right_label="Alin / Ylin",
+                right_value="-6.0° / -2.1°",
+            )
+            .add_section("MITTARIT", right_text="4 kpl")
+            .add_stat_grid(
+                [
+                    StatTile("Tuuli", "5.4 m/s", subtext="Lounas", accent_color="#38bdf8"),
+                    StatTile("Kosteus", "84%", subtext="Normaali", accent_color="#06b6d4"),
+                    StatTile("Paine", "1012 hPa", accent_color="#a855f7"),
+                    StatTile("Pilvisyys", "90%", accent_color="#94a3b8"),
+                ],
+                columns=4,
+            )
+            .add_progress_bar("RAM", value=68.2, max_value=100.0, unit="%", sublabel="5.3 GB")
+            .add_range_bar(
+                "Päivänvalo",
+                value_frac=0.6,
+                start_label="08:30",
+                end_label="15:00",
+                current_label="6 h 30 min",
+            )
+            .add_section("AIKAJANA", right_text="20:15 – 21:15")
+            .add_timeline(
+                [
+                    TimelineItem("YLE TV1", "A-studio", 0.0, 0.4, "20:00–20:30", is_live=True, progress=0.5),
+                    TimelineItem("MTV3", "Uutiset", 0.4, 0.9, "20:30–21:05", is_live=False),
+                ],
+                start_label="20:00",
+                end_label="21:15",
+                now_fraction=0.2,
+                now_label="NYT 20:15",
+            )
+            .add_section("VERTAILU")
+            .add_bar_list(
+                [
+                    BarItem("Terry", 100.0, "2 pv", subtext="11 kuolemaa", badge=Badge("PAIKALLA", BadgeColor.GREEN)),
+                    BarItem("Matti", 45.0, "22 h", badge=Badge("POISSA", BadgeColor.GRAY)),
+                ],
+                show_rank=True,
+            )
+            .add_table(
+                headers=["Käyttäjä", "Tila", "Viive"],
+                rows=[["Terry", Badge("ÄÄNESSÄ", BadgeColor.GREEN), "18 ms"]],
+                mono_cols=[2],
+            )
+            .add_callout("Tärkeä huomio", title="Vinkki", tone="info")
+        )
+        with patch("PIL.ImageDraw.ImageDraw.rounded_rectangle") as mock_rounded:
+            raw_bytes = render_card(card)
+            mock_rounded.assert_not_called()
+        img = self._assert_valid_png(raw_bytes)
+        self.assertEqual(img.width, 800)
+        self.assertGreater(img.height, 600)
+
+    def test_theme_from_config(self) -> None:
+        cfg = RenderingConfig(theme="dark", card_width=960, font_family="mono")
+        theme = theme_from_config(cfg)
+        self.assertEqual(theme.card_width, 960)
+        self.assertEqual(theme.font_family, "mono")
+        clamped = theme_from_config(RenderingConfig(card_width=100))
+        self.assertEqual(clamped.card_width, 300)
+
+    def test_sanitize_for_pil_and_icons(self) -> None:
+        self.assertEqual(sanitize_for_pil("⚠️ Sää 🌡️ Lämpö -4.2°C • Tampere"), "Sää Lämpö -4.2°C • Tampere")
+        self.assertEqual(sanitize_for_pil("↙ Lounas • äöåÄÖÅ"), "Lounas • äöåÄÖÅ")
+
+        self.assertEqual(weather_icon_name(200, "11d"), "storm")
+        self.assertEqual(weather_icon_name(500, "10d"), "rain")
+        self.assertEqual(weather_icon_name(601, "13d"), "snow")
+        self.assertEqual(weather_icon_name(741, "50d"), "fog")
+        self.assertEqual(weather_icon_name(800, "01d"), "sun")
+        self.assertEqual(weather_icon_name(800, "01n"), "moon")
+        self.assertEqual(weather_icon_name(801, "02d"), "partly_cloudy")
+        self.assertEqual(weather_icon_name(804, "04d"), "cloud")
+
+        from PIL import ImageDraw
+        canvas = Image.new("RGB", (100, 100), "#151821")
+        draw = ImageDraw.Draw(canvas)
+        with patch("PIL.ImageDraw.ImageDraw.rounded_rectangle") as mock_rounded:
+            for name in (
+                "sun", "moon", "cloud", "partly_cloudy", "rain", "snow",
+                "storm", "fog", "live", "server", "voice", "warning", "info", "wind:225",
+            ):
+                draw_icon(draw, name, 50, 50, 40, "#38bdf8", "#f4f6fb")
             mock_rounded.assert_not_called()
 
 

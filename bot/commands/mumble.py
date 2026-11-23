@@ -7,13 +7,13 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from bot.commands.common import command_handler
-from bot.commands.common import command_handler
 from bot.commands.message_utils import reply_in_chunks, reply_with_card
 from bot.commands.mumble_logic import (
     handle_mumble_card_command,
     parse_mumble_command,
 )
 from bot.config import BotConfig
+from bot.rendering import theme_from_config
 from bot.tasks.mumble import get_mumble_manager
 
 COMMAND_USAGE = "!mumble | !mumble <käyttäjä>"
@@ -48,6 +48,7 @@ def _build_handler(
             await reply_with_card(
                 update,
                 card=card,
+                theme=theme_from_config(config.rendering),
                 fallback_text=reply_text,
                 filename="mumble.png",
                 max_reply_length=config.max_reply_length,

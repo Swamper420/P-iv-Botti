@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from bot.config import TelkkariConfig
-from bot.rendering import BadgeColor, Card
+from bot.rendering import BadgeColor, Card, TimelineItem
 
 logger = logging.getLogger(__name__)
 
@@ -252,21 +252,24 @@ def build_telkkari_info_card(
 
 def build_unknown_channel_card(channel_num: int) -> Card:
     """Card for unknown channel numbers, listing available channels."""
-    rows = [[str(num), name] for num, (name, _) in sorted(FREE_CHANNELS.items())]
+    rows: list[list[str]] = [[str(num), name] for num, (name, _) in sorted(FREE_CHANNELS.items())]
     return (
         Card(
             title="Tuntematon kanava",
             subtitle=f"Kanava {channel_num} ei löytynyt",
             footer=TELKKARI_CARD_FOOTER,
+            accent_color="#eab308",
         )
         .set_badge("VIRHE", BadgeColor.YELLOW)
-        .add_text(f"⚠️ Tuntematon kanavanumero: {channel_num}.")
+        .add_callout(f"Tuntematon kanavanumero: {channel_num}.", title="Valitse listalta", tone="warning")
+        .add_section("SAATAVILLA OLEVAT KANAVAT", right_text=f"{len(rows)} kanavaa")
         .add_table(
             headers=["#", "Kanava"],
             rows=rows,
-            col_widths=[1, 5],
+            col_widths=[1, 6],
             primary_col=1,
             bold_cols=[1],
+            mono_cols=[0],
             overflow="ellipsis",
         )
     )
@@ -274,24 +277,27 @@ def build_unknown_channel_card(channel_num: int) -> Card:
 
 def build_telkkari_error_card(message: str, subtitle: str | None = None) -> Card:
     """Card for fetch failures and other error states."""
-    return build_telkkari_info_card(
-        "TV-ohjelmat",
-        message,
-        badge_text="VIRHE",
-        badge_color=BadgeColor.RED,
-        subtitle=subtitle,
+    return (
+        Card(title="TV-ohjelmat", subtitle=subtitle, footer=TELKKARI_CARD_FOOTER, accent_color="#ef4444")
+        .set_badge("VIRHE", BadgeColor.RED)
+        .add_callout(message, title="Haku epäonnistui", tone="error")
     )
 
 
 def build_invalid_channel_arg_card(raw_arg: str) -> Card:
     """Card for non-numeric channel arguments (e.g. '!telkkari abc')."""
-    return build_telkkari_info_card(
-        "TV-ohjelmat",
-        f"⚠️ Virheellinen kanavanumero: '{raw_arg}'. "
-        "Anna kanavanumero pelkkänä lukuna (esim. !telkkari 1).",
-        badge_text="VIRHE",
-        badge_color=BadgeColor.YELLOW,
-        subtitle="Käyttö: !telkkari <kanavanumero>",
+    return (
+        Card(
+            title="TV-ohjelmat",
+            subtitle="Käyttö: !telkkari <kanavanumero>",
+            footer=TELKKARI_CARD_FOOTER,
+            accent_color="#eab308",
+        )
+        .set_badge("VIRHE", BadgeColor.YELLOW)
+        .add_callout(
+            f"Virheellinen kanavanumero: '{raw_arg}'. Anna kanavanumero pelkkänä lukuna (esim. !telkkari 1).",
+            tone="warning",
+        )
     )
 
 
@@ -300,12 +306,7 @@ def build_channel_day_card(
     items: list[tuple[datetime, datetime, str]],
     now: datetime | None = None,
 ) -> Card:
-    """Build a picture card for a single channel's remaining day schedule.
-
-    ``items`` are ``(start, stop, title)`` tuples with timezone-aware
-    datetimes (as collected from the EPG). An empty ``items`` list renders
-    a compact "no programmes" card instead of an empty table.
-    """
+    """Build a high-signal picture card for a single channel's remaining day schedule."""
     resolved_now = (now.astimezone(HELSINKI_TZ) if now is not None else datetime.now(HELSINKI_TZ))
     date_str = resolved_now.strftime("%d.%m.%Y")
 
@@ -319,27 +320,71 @@ def build_channel_day_card(
         )
 
     ordered = sorted(items, key=lambda x: x[0])
-    rows = [
-        [start_dt.strftime("%H:%M") + " - " + stop_dt.strftime("%H:%M"), title]
-        for start_dt, stop_dt, title in ordered
-    ]
-    return (
-        Card(
-            title=channel_name,
-            subtitle=f"tänään {date_str} • {len(rows)} ohjelmaa",
-            footer=TELKKARI_CARD_FOOTER,
+    live_item: tuple[datetime, datetime, str] | None = None
+    upcoming_items: list[tuple[datetime, datetime, str]] = []
+    for start_dt, stop_dt, title in ordered:
+        if live_item is None and start_dt <= resolved_now < stop_dt:
+            live_item = (start_dt, stop_dt, title)
+        elif start_dt >= resolved_now or live_item is not None:
+            upcoming_items.append((start_dt, stop_dt, title))
+
+    is_live = live_item is not None
+    card = Card(
+        title=channel_name,
+        subtitle=f"tänään {date_str} • {len(ordered)} ohjelmaa",
+        footer=TELKKARI_CARD_FOOTER,
+        accent_color="#22c55e" if is_live else "#38bdf8",
+    )
+    if is_live:
+        card.set_badge("TÄNÄÄN", BadgeColor.GREEN)
+        l_start, l_stop, l_title = live_item
+        total_sec = max(60.0, (l_stop - l_start).total_seconds())
+        elapsed_sec = max(0.0, min(total_sec, (resolved_now - l_start).total_seconds()))
+        elapsed_min = int(elapsed_sec // 60)
+        total_min = max(1, int(total_sec // 60))
+        rem_min = max(0, total_min - elapsed_min)
+        card.add_section(
+            "NYT KÄYNNISSÄ",
+            right_text=f"{l_start.strftime('%H:%M')} – {l_stop.strftime('%H:%M')}",
+            accent_color="#22c55e",
         )
-        .set_badge("TÄNÄÄN", BadgeColor.BLUE)
-        .add_table(
+        card.add_callout(
+            l_title,
+            title=f"Jäljellä {rem_min} min",
+            tone="live",
+        )
+        card.add_progress_bar(
+            "Ohjelman eteneminen",
+            value=float(elapsed_min),
+            max_value=float(total_min),
+            unit="min",
+            color="#22c55e",
+        )
+    else:
+        card.set_badge("TÄNÄÄN", BadgeColor.BLUE)
+
+    table_items = upcoming_items if is_live else ordered
+    if table_items:
+        rows: list[list[str]] = [
+            [f"{start_dt.strftime('%H:%M')} - {stop_dt.strftime('%H:%M')}", title]
+            for start_dt, stop_dt, title in table_items
+        ]
+        card.add_section(
+            "TULOSSA TÄNÄÄN" if is_live else "OHJELMAT TÄNÄÄN",
+            right_text=f"{len(rows)} ohjelmaa",
+        )
+        card.add_table(
             headers=["Aika", "Ohjelma"],
             rows=rows,
-            col_widths=[1, 3],
+            col_widths=[1.4, 4.6],
             primary_col=1,
             bold_cols=[1],
-            max_rows=25,
+            mono_cols=[0],
+            max_rows=22,
             overflow="ellipsis",
         )
-    )
+
+    return card
 
 
 def build_next_hour_card(
@@ -347,11 +392,7 @@ def build_next_hour_card(
     now: datetime | None = None,
     next_hour_end: datetime | None = None,
 ) -> Card:
-    """Build a picture card for the next-hour overview across channels.
-
-    ``entries`` are ``(channel_name, start, stop, title)`` tuples.
-    An empty list renders a compact "no programmes" card.
-    """
+    """Build a visual timeline picture card for the next-hour overview across channels."""
     resolved_now = (now.astimezone(HELSINKI_TZ) if now is not None else datetime.now(HELSINKI_TZ))
     resolved_end = (
         next_hour_end.astimezone(HELSINKI_TZ)
@@ -370,27 +411,56 @@ def build_next_hour_card(
         )
 
     ordered = sorted(entries, key=lambda x: (x[0], x[1]))
-    rows = [
-        [ch_name, start_dt.strftime("%H:%M") + " - " + stop_dt.strftime("%H:%M"), title]
-        for ch_name, start_dt, stop_dt, title in ordered
-    ]
-    return (
+    # Include 15-min lookback so currently-airing shows display live progress to the left of NYT
+    window_start = resolved_now - timedelta(minutes=15)
+    window_span_s = max(60.0, (resolved_end - window_start).total_seconds())
+    now_frac = max(0.0, min(1.0, (resolved_now - window_start).total_seconds() / window_span_s))
+
+    timeline_items: list[TimelineItem] = []
+    live_count = 0
+    for ch_name, start_dt, stop_dt, title in ordered[:14]:
+        is_live = start_dt <= resolved_now < stop_dt
+        if is_live:
+            live_count += 1
+        sf = max(0.0, min(1.0, (start_dt - window_start).total_seconds() / window_span_s))
+        ef = max(sf, min(1.0, (stop_dt - window_start).total_seconds() / window_span_s))
+        prog: float | None = None
+        if is_live:
+            dur = max(1.0, (stop_dt - start_dt).total_seconds())
+            prog = max(0.0, min(1.0, (resolved_now - start_dt).total_seconds() / dur))
+        timeline_items.append(
+            TimelineItem(
+                label=ch_name,
+                title=title,
+                start_frac=sf,
+                end_frac=ef,
+                time_text=f"{start_dt.strftime('%H:%M')}–{stop_dt.strftime('%H:%M')}",
+                is_live=is_live,
+                color="#22c55e" if is_live else "#38bdf8",
+                progress=prog,
+            )
+        )
+
+    card = (
         Card(
             title="TV-ohjelmat",
             subtitle=f"seuraavan tunnin aikana • {time_range}",
-            footer=TELKKARI_CARD_FOOTER,
+            footer=f"Vihreä = nyt käynnissä ({live_count} kpl) • {TELKKARI_CARD_FOOTER}",
+            accent_color="#22c55e" if live_count > 0 else "#38bdf8",
         )
-        .set_badge(f"{len(rows)} OHJELMAA", BadgeColor.GREEN)
-        .add_table(
-            headers=["Kanava", "Aika", "Ohjelma"],
-            rows=rows,
-            col_widths=[2, 2, 5],
-            primary_col=2,
-            bold_cols=[2],
-            max_rows=20,
-            overflow="ellipsis",
+        .set_badge(f"{len(ordered)} OHJELMAA", BadgeColor.GREEN)
+        .add_section("OHJELMAKARTTA", right_text=time_range)
+        .add_timeline(
+            items=timeline_items,
+            start_label=window_start.strftime("%H:%M"),
+            end_label=resolved_end.strftime("%H:%M"),
+            now_fraction=now_frac,
+            now_label=f"NYT {resolved_now.strftime('%H:%M')}",
         )
     )
+    if len(ordered) > len(timeline_items):
+        card.add_text(f"… (+{len(ordered) - len(timeline_items)} muuta ohjelmaa)", muted=True)
+    return card
 
 
 def _collect_channel_day_items(

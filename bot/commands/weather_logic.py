@@ -10,7 +10,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from bot.config import BotConfig, WeatherConfig
-from bot.rendering import BadgeColor, Card
+from bot.rendering import BadgeColor, Card, StatTile
+from bot.rendering.icons import weather_icon_name
 
 LOGGER = logging.getLogger(__name__)
 
@@ -753,9 +754,41 @@ def build_weather_error_card(message: str, location_query: str | None = None) ->
             footer="Digitraffic / Fintraffic • P-iv-Botti",
         )
         .set_badge("VIRHE", BadgeColor.RED)
-        .add_text(f"⚠️ {message}")
+        .add_callout(message, title="Säähaku epäonnistui", tone="error")
         .add_text("Kokeile toista läheistä paikkaa (esim. !sääkuva Helsinki).", muted=True)
     )
+
+
+def wind_direction_name(deg: int | None) -> str | None:
+    """Map wind degrees to Finnish compass name without arrow symbols."""
+    if deg is None:
+        return None
+    try:
+        d = int(deg) % 360
+    except (TypeError, ValueError):
+        return None
+    idx = int((d + 22.5) // 45) % 8
+    names = [
+        "Pohjoinen",
+        "Koillinen",
+        "Itä",
+        "Kaakko",
+        "Etelä",
+        "Lounas",
+        "Länsi",
+        "Luode",
+    ]
+    return names[idx]
+
+
+def _humidity_subtext(humidity_pct: int | None) -> str | None:
+    if humidity_pct is None:
+        return None
+    if humidity_pct >= 85:
+        return "Kostea"
+    if humidity_pct <= 35:
+        return "Kuiva"
+    return "Normaali"
 
 
 def build_weather_card(
@@ -763,7 +796,7 @@ def build_weather_card(
     cam: WeatherCamResult | None = None,
     weather: WeatherInfo | None = None,
 ) -> Card:
-    """Build a pleasing, informative picture card combining cam photo(s) + weather."""
+    """Build a high-signal HUD picture card combining cam photo(s) + weather."""
     station_name = cam.station_name if cam and cam.station_name else None
     frames = _cam_display_frames(cam)
     total_angles = cam.total_angles if cam else None
@@ -771,7 +804,6 @@ def build_weather_card(
     is_single_angle = selected_angle is not None or len(frames) <= 1
 
     if weather is not None:
-        emoji = weather_emoji(weather.condition_id, weather.icon)
         badge_color = badge_color_for_condition(weather.condition_id, weather.icon)
         accent = accent_color_for_condition(weather.condition_id, weather.icon)
 
@@ -804,7 +836,7 @@ def build_weather_card(
         subtitle = " • ".join(subtitle_parts)
 
         desc_cap = _capitalize_fi(weather.description)
-        badge_text = f"{emoji} {weather.temp_c:.1f}°C {desc_cap}"
+        badge_text = f"{weather.temp_c:.1f}°C"
 
         card = Card(
             title=title,
@@ -813,11 +845,20 @@ def build_weather_card(
             accent_color=accent,
         ).set_badge(badge_text, badge_color)
 
-        # Hero headline: big readable summary
-        card.add_text(
-            f"{emoji} {desc_cap} — {weather.temp_c:.1f}°C "
-            f"(tuntuu {weather.feels_like_c:.1f}°C)",
-            bold=True,
+        right_label: str | None = None
+        right_value: str | None = None
+        if weather.temp_min_c is not None and weather.temp_max_c is not None:
+            right_label = "Alin / Ylin"
+            right_value = f"{weather.temp_min_c:.1f}° / {weather.temp_max_c:.1f}°"
+
+        card.add_hero(
+            value=f"{weather.temp_c:.1f}°C",
+            label=desc_cap,
+            subtext=f"Tuntuu kuin {weather.feels_like_c:.1f}°C",
+            accent_color=accent,
+            icon=weather_icon_name(weather.condition_id, weather.icon),
+            right_label=right_label,
+            right_value=right_value,
         )
 
         if frames:
@@ -830,67 +871,95 @@ def build_weather_card(
                     labels=[str(f.angle_number) for f in frames],
                     caption=caption,
                 )
-                card.add_text(
-                    f"Vinkki: !sääkuva {location_query} <numero> näyttää vain yhden kulman.",
-                    muted=True,
+                card.add_callout(
+                    f"Näytä yksittäinen kulma: !sääkuva {location_query} <numero>",
+                    tone="info",
                 )
 
-        # Key facts grid (2 columns keeps it dense but readable)
-        card.add_key_value("Lämpötila", f"{weather.temp_c:.1f}°C")
-        card.add_key_value("Tuntuu", f"{weather.feels_like_c:.1f}°C")
-        if weather.temp_min_c is not None and weather.temp_max_c is not None:
-            card.add_key_value(
-                "Alin / Ylin", f"{weather.temp_min_c:.1f} / {weather.temp_max_c:.1f}°C"
+        # Compact KPI stat grid (no duplicate stats)
+        tiles: list[StatTile] = []
+        if weather.wind_speed_ms is not None:
+            wind_sub_parts: list[str] = []
+            w_dir = wind_direction_name(weather.wind_deg)
+            if w_dir:
+                wind_sub_parts.append(w_dir)
+            if weather.wind_gust_ms is not None:
+                wind_sub_parts.append(f"puuskat {weather.wind_gust_ms:.1f}")
+            tiles.append(
+                StatTile(
+                    label="Tuuli",
+                    value=f"{weather.wind_speed_ms:.1f} m/s",
+                    subtext=" • ".join(wind_sub_parts) if wind_sub_parts else None,
+                    accent_color="#38bdf8",
+                )
             )
         if weather.humidity_pct is not None:
-            card.add_key_value("Kosteus", f"{weather.humidity_pct}%")
-        wind_str = format_wind(weather.wind_speed_ms, weather.wind_deg)
-        if wind_str:
-            card.add_key_value("Tuuli", wind_str)
-        if weather.wind_gust_ms is not None:
-            card.add_key_value("Puuskat", f"{weather.wind_gust_ms:.1f} m/s")
+            tiles.append(
+                StatTile(
+                    label="Kosteus",
+                    value=f"{weather.humidity_pct}%",
+                    subtext=_humidity_subtext(weather.humidity_pct),
+                    accent_color="#06b6d4",
+                )
+            )
         if weather.pressure_hpa is not None:
-            card.add_key_value("Paine", f"{weather.pressure_hpa} hPa")
-        if weather.clouds_pct is not None:
-            card.add_key_value("Pilvisyys", f"{weather.clouds_pct}%")
+            tiles.append(
+                StatTile(
+                    label="Ilmanpaine",
+                    value=f"{weather.pressure_hpa} hPa",
+                    subtext="Normaali" if 1005 <= weather.pressure_hpa <= 1025 else None,
+                    accent_color="#a855f7",
+                )
+            )
         vis = format_visibility(weather.visibility_m)
-        if vis:
-            card.add_key_value("Näkyvyys", vis)
-
-        # Visual meters for humidity / cloudiness
-        if weather.humidity_pct is not None:
-            try:
-                card.add_progress_bar(
-                    "Kosteus",
-                    value=float(weather.humidity_pct),
-                    max_value=100.0,
-                    unit="%",
-                    color="#38bdf8",
-                )
-            except (TypeError, ValueError):
-                pass
         if weather.clouds_pct is not None:
-            try:
-                card.add_progress_bar(
-                    "Pilvisyys",
-                    value=float(weather.clouds_pct),
-                    max_value=100.0,
-                    unit="%",
-                    color="#94a3b8",
+            tiles.append(
+                StatTile(
+                    label="Pilvisyys",
+                    value=f"{weather.clouds_pct}%",
+                    subtext=f"Näkyvyys {vis}" if vis else None,
+                    accent_color="#94a3b8",
                 )
-            except (TypeError, ValueError):
-                pass
+            )
+        elif vis:
+            tiles.append(
+                StatTile(
+                    label="Näkyvyys",
+                    value=vis,
+                    accent_color="#94a3b8",
+                )
+            )
 
+        if tiles:
+            card.add_stat_grid(tiles, columns=min(4, max(2, len(tiles))))
+
+        # Daylight progress range bar
         sunrise = format_sun_time(weather.sunrise_ts, weather.timezone_offset_s)
         sunset = format_sun_time(weather.sunset_ts, weather.timezone_offset_s)
-        if sunrise or sunset or obs:
-            card.add_divider()
-            if sunrise:
-                card.add_key_value("Auringonnousu", sunrise)
-            if sunset:
-                card.add_key_value("Auringonlasku", sunset)
-            if obs:
-                card.add_key_value("Havainto", obs)
+        if (
+            sunrise
+            and sunset
+            and weather.sunrise_ts is not None
+            and weather.sunset_ts is not None
+            and weather.sunset_ts > weather.sunrise_ts
+        ):
+            ref_ts = (
+                weather.observation_ts
+                if weather.observation_ts is not None
+                else int(datetime.now(timezone.utc).timestamp())
+            )
+            span_s = weather.sunset_ts - weather.sunrise_ts
+            frac = max(0.0, min(1.0, (ref_ts - weather.sunrise_ts) / span_s))
+            day_mins = span_s // 60
+            day_len = f"Päivän pituus {day_mins // 60} h {day_mins % 60:02d} min"
+            card.add_range_bar(
+                label="Päivänvalo",
+                value_frac=frac,
+                start_label=f"Auringonnousu {sunrise}",
+                end_label=f"Auringonlasku {sunset}",
+                current_label=day_len,
+                color="#fbbf24",
+            )
 
         return card
 
@@ -925,12 +994,12 @@ def build_weather_card(
                 labels=[str(f.angle_number) for f in frames],
                 caption=caption or subtitle,
             )
-            card.add_text(
-                f"Vinkki: !sääkuva {location_query} <numero> näyttää vain yhden kulman.",
-                muted=True,
+            card.add_callout(
+                f"Näytä yksittäinen kulma: !sääkuva {location_query} <numero>",
+                tone="info",
             )
-    card.add_text(
+    card.add_callout(
         "Säätiedot eivät ole saatavilla (OPENWEATHER_API_KEY puuttuu tai haku epäonnistui).",
-        muted=True,
+        tone="warning",
     )
     return card

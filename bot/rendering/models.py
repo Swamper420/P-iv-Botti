@@ -22,12 +22,14 @@ class BadgeStyle:
 
 
 BADGE_STYLES: dict[str, BadgeStyle] = {
-    BadgeColor.GREEN.value: BadgeStyle(bg_color="#14532d", fg_color="#86efac", border_color="#22c55e"),
-    BadgeColor.RED.value: BadgeStyle(bg_color="#7f1d1d", fg_color="#fca5a5", border_color="#ef4444"),
-    BadgeColor.YELLOW.value: BadgeStyle(bg_color="#713f12", fg_color="#fde047", border_color="#eab308"),
-    BadgeColor.BLUE.value: BadgeStyle(bg_color="#1e3a8a", fg_color="#93c5fd", border_color="#3b82f6"),
-    BadgeColor.PURPLE.value: BadgeStyle(bg_color="#581c87", fg_color="#d8b4fe", border_color="#a855f7"),
-    BadgeColor.GRAY.value: BadgeStyle(bg_color="#27272a", fg_color="#d4d4d8", border_color="#52525b"),
+    BadgeColor.GREEN.value: BadgeStyle(bg_color="#0f3d24", fg_color="#6ee7b7", border_color="#22c55e"),
+    BadgeColor.RED.value: BadgeStyle(bg_color="#4c1319", fg_color="#fda4af", border_color="#ef4444"),
+    BadgeColor.YELLOW.value: BadgeStyle(bg_color="#452b0b", fg_color="#fde047", border_color="#eab308"),
+    BadgeColor.BLUE.value: BadgeStyle(bg_color="#132c57", fg_color="#7dd3fc", border_color="#38bdf8"),
+    BadgeColor.PURPLE.value: BadgeStyle(bg_color="#38165a", fg_color="#d8b4fe", border_color="#a855f7"),
+    BadgeColor.GRAY.value: BadgeStyle(bg_color="#1f2430", fg_color="#cbd5e1", border_color="#475569"),
+    "cyan": BadgeStyle(bg_color="#0d3545", fg_color="#67e8f9", border_color="#06b6d4"),
+    "orange": BadgeStyle(bg_color="#4a200d", fg_color="#fdba74", border_color="#f97316"),
 }
 
 
@@ -51,22 +53,41 @@ class Badge:
 
 @dataclass(frozen=True)
 class Theme:
-    canvas_bg: str = "#111114"
-    card_bg: str = "#1b1b20"
-    panel_bg: str = "#24242c"
-    border_color: str = "#363642"
+    canvas_bg: str = "#0e1015"
+    card_bg: str = "#151821"
+    panel_bg: str = "#1c202c"
+    panel_recessed: str = "#10131a"
+    border_color: str = "#2a3040"
+    border_bright: str = "#3b4358"
     accent_color: str = "#38bdf8"
-    text_primary: str = "#f4f4f5"
-    text_secondary: str = "#a1a1aa"
-    text_muted: str = "#71717a"
-    code_bg: str = "#151518"
+    text_primary: str = "#f4f6fb"
+    text_secondary: str = "#a5adc0"
+    text_muted: str = "#6b7388"
+    code_bg: str = "#0f1218"
     font_family: str = "auto"
     card_width: int = 800
-    padding: int = 18
-    element_spacing: int = 12
+    padding: int = 22
+    element_spacing: int = 14
 
 
 DARK_THEME = Theme()
+
+
+def theme_from_config(rendering_config: Any) -> Theme:
+    """Builds a Theme from a RenderingConfig-like object."""
+    if rendering_config is None:
+        return DARK_THEME
+    card_width = getattr(rendering_config, "card_width", DARK_THEME.card_width)
+    font_family = getattr(rendering_config, "font_family", DARK_THEME.font_family)
+    try:
+        card_width = int(card_width)
+    except (TypeError, ValueError):
+        card_width = DARK_THEME.card_width
+    card_width = max(300, min(4000, card_width))
+    return Theme(
+        card_width=card_width,
+        font_family=str(font_family or "auto"),
+    )
 
 
 class CardElement:
@@ -95,13 +116,14 @@ class KeyValuesElement(CardElement):
 @dataclass
 class TableElement(CardElement):
     headers: list[str] = field(default_factory=list)
-    rows: list[list[str]] = field(default_factory=list)
+    rows: list[list[str | Badge]] = field(default_factory=list)
     alignments: list[str] | None = None  # "left", "center", "right"
     col_widths: list[int | float] | None = None  # explicit pixels or proportional weights
     max_rows: int | None = None
     overflow: str = "ellipsis"  # "ellipsis", "clip", "none"
     primary_col: int | None = 0  # Column to highlight/make bigger and bold (default 0)
     bold_cols: list[int] | None = None  # Specific columns to render in bold
+    mono_cols: list[int] | None = None  # Specific columns to render in monospace
 
 
 @dataclass
@@ -118,6 +140,8 @@ class ProgressBarElement(CardElement):
     max_value: float = 100.0
     unit: str = "%"
     color: str | None = None
+    sublabel: str | None = None
+    show_percentage: bool = True
 
 
 @dataclass
@@ -142,6 +166,95 @@ class ImageGridElement(CardElement):
     caption: str | None = None
     max_cell_height: int | None = 280
     gap: int = 8
+
+
+@dataclass
+class SectionHeaderElement(CardElement):
+    title: str
+    right_text: str | None = None
+    accent_color: str | None = None
+
+
+@dataclass
+class HeroElement(CardElement):
+    value: str
+    label: str
+    subtext: str | None = None
+    accent_color: str | None = None
+    icon: str | None = None
+    right_label: str | None = None
+    right_value: str | None = None
+
+
+@dataclass(frozen=True)
+class StatTile:
+    label: str
+    value: str
+    subtext: str | None = None
+    accent_color: str | None = None
+
+
+@dataclass
+class StatGridElement(CardElement):
+    items: list[StatTile] = field(default_factory=list)
+    columns: int = 3
+
+
+@dataclass(frozen=True)
+class TimelineItem:
+    label: str
+    title: str
+    start_frac: float
+    end_frac: float
+    time_text: str
+    is_live: bool = False
+    color: str | None = None
+    progress: float | None = None
+
+
+@dataclass
+class TimelineElement(CardElement):
+    items: list[TimelineItem] = field(default_factory=list)
+    start_label: str = ""
+    end_label: str = ""
+    now_fraction: float | None = None
+    now_label: str = "NYT"
+
+
+@dataclass(frozen=True)
+class BarItem:
+    label: str
+    value: float
+    value_text: str
+    subtext: str | None = None
+    color: str | None = None
+    badge: Badge | None = None
+
+
+@dataclass
+class BarListElement(CardElement):
+    items: list[BarItem] = field(default_factory=list)
+    max_value: float | None = None
+    show_rank: bool = False
+
+
+@dataclass
+class RangeBarElement(CardElement):
+    label: str
+    value_frac: float
+    start_label: str
+    end_label: str
+    current_label: str | None = None
+    color: str | None = None
+    track_color: str | None = None
+
+
+@dataclass
+class CalloutElement(CardElement):
+    text: str
+    title: str | None = None
+    color: str | None = None
+    tone: str = "info"  # "info", "live", "warning", "error", "success"
 
 
 @dataclass
@@ -219,13 +332,14 @@ class Card:
     def add_table(
         self,
         headers: list[str],
-        rows: list[list[str]],
+        rows: list[list[str | Badge]],
         alignments: list[str] | None = None,
         col_widths: list[int | float] | None = None,
         max_rows: int | None = None,
         overflow: str = "ellipsis",
         primary_col: int | None = 0,
         bold_cols: list[int] | None = None,
+        mono_cols: list[int] | None = None,
     ) -> Card:
         self.elements.append(
             TableElement(
@@ -237,6 +351,7 @@ class Card:
                 overflow=overflow,
                 primary_col=primary_col,
                 bold_cols=bold_cols,
+                mono_cols=mono_cols,
             )
         )
         return self
@@ -256,6 +371,8 @@ class Card:
         max_value: float = 100.0,
         unit: str = "%",
         color: str | None = None,
+        sublabel: str | None = None,
+        show_percentage: bool = True,
     ) -> Card:
         self.elements.append(
             ProgressBarElement(
@@ -264,6 +381,8 @@ class Card:
                 max_value=max_value,
                 unit=unit,
                 color=color,
+                sublabel=sublabel,
+                show_percentage=show_percentage,
             )
         )
         return self
@@ -315,6 +434,128 @@ class Card:
                 caption=caption,
                 max_cell_height=max_cell_height,
                 gap=gap,
+            )
+        )
+        return self
+
+    def add_section(
+        self,
+        title: str,
+        right_text: str | None = None,
+        accent_color: str | None = None,
+    ) -> Card:
+        self.elements.append(
+            SectionHeaderElement(
+                title=title,
+                right_text=right_text,
+                accent_color=accent_color,
+            )
+        )
+        return self
+
+    def add_hero(
+        self,
+        value: str,
+        label: str,
+        subtext: str | None = None,
+        accent_color: str | None = None,
+        icon: str | None = None,
+        right_label: str | None = None,
+        right_value: str | None = None,
+    ) -> Card:
+        self.elements.append(
+            HeroElement(
+                value=value,
+                label=label,
+                subtext=subtext,
+                accent_color=accent_color,
+                icon=icon,
+                right_label=right_label,
+                right_value=right_value,
+            )
+        )
+        return self
+
+    def add_stat_grid(
+        self,
+        items: list[StatTile],
+        columns: int = 3,
+    ) -> Card:
+        self.elements.append(
+            StatGridElement(items=list(items), columns=columns)
+        )
+        return self
+
+    def add_timeline(
+        self,
+        items: list[TimelineItem],
+        start_label: str = "",
+        end_label: str = "",
+        now_fraction: float | None = None,
+        now_label: str = "NYT",
+    ) -> Card:
+        self.elements.append(
+            TimelineElement(
+                items=list(items),
+                start_label=start_label,
+                end_label=end_label,
+                now_fraction=now_fraction,
+                now_label=now_label,
+            )
+        )
+        return self
+
+    def add_bar_list(
+        self,
+        items: list[BarItem],
+        max_value: float | None = None,
+        show_rank: bool = False,
+    ) -> Card:
+        self.elements.append(
+            BarListElement(
+                items=list(items),
+                max_value=max_value,
+                show_rank=show_rank,
+            )
+        )
+        return self
+
+    def add_range_bar(
+        self,
+        label: str,
+        value_frac: float,
+        start_label: str,
+        end_label: str,
+        current_label: str | None = None,
+        color: str | None = None,
+        track_color: str | None = None,
+    ) -> Card:
+        self.elements.append(
+            RangeBarElement(
+                label=label,
+                value_frac=value_frac,
+                start_label=start_label,
+                end_label=end_label,
+                current_label=current_label,
+                color=color,
+                track_color=track_color,
+            )
+        )
+        return self
+
+    def add_callout(
+        self,
+        text: str,
+        title: str | None = None,
+        color: str | None = None,
+        tone: str = "info",
+    ) -> Card:
+        self.elements.append(
+            CalloutElement(
+                text=text,
+                title=title,
+                color=color,
+                tone=tone,
             )
         )
         return self
