@@ -278,6 +278,7 @@ class ConfigTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True):
                 config = BotConfig.from_environment()
 
+        self.assertEqual(config.telegram_bot_token, "token")
         self.assertFalse(config.maraton.enabled)
         self.assertEqual(config.maraton.event_date, "2027-09-12")
         self.assertEqual(config.maraton.send_time, "07:30")

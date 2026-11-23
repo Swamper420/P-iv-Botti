@@ -1040,11 +1040,11 @@ class BotConfig:
         maraton_chat_ids_list: list[int] = []
         if raw_maraton_chat_ids:
             for item in raw_maraton_chat_ids.split(","):
-                token = item.strip()
-                if not token:
+                chat_id_str = item.strip()
+                if not chat_id_str:
                     continue
                 try:
-                    maraton_chat_ids_list.append(int(token))
+                    maraton_chat_ids_list.append(int(chat_id_str))
                 except ValueError as exc:
                     raise ValueError(
                         "MARATON_CHAT_IDS must be a comma-separated list of integer chat IDs"
