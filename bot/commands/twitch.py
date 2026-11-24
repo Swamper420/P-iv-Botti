@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
@@ -9,7 +10,7 @@ from bot.commands.message_utils import reply_in_chunks
 from bot.commands.twitch_logic import fetch_twitch_status_reply, parse_twitch_command
 from bot.config import BotConfig
 
-COMMAND_USAGE = "!twitch"
+COMMAND_USAGE = "!twitch | !twitch <kanava>"
 
 
 def _build_handler(
@@ -21,11 +22,14 @@ def _build_handler(
         if message is None:
             return
 
-        matched, _ = parse_twitch_command(message.text)
+        matched, channel_name = parse_twitch_command(message.text)
         if not matched:
             return
 
-        reply_text = await fetch_twitch_status_reply(config.twitch)
+        reply_text = await fetch_twitch_status_reply(
+            config.twitch,
+            channel_name=channel_name or None,
+        )
         await reply_in_chunks(update, reply_text, config.max_reply_length, parse_mode="HTML")
 
     return handle_twitch
@@ -34,5 +38,5 @@ def _build_handler(
 def register(application: Application, config: BotConfig) -> None:
     handler = _build_handler(config)
     application.add_handler(
-        MessageHandler(filters.Regex(r"^\s*!twitch(?:\s+|$)"), handler)
+        MessageHandler(filters.Regex(re.compile(r"^\s*!twitch(?:\s+|$)", re.IGNORECASE)), handler)
     )

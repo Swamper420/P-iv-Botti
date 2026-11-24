@@ -3,7 +3,11 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from bot.commands.twitch_logic import fetch_twitch_status_reply, parse_twitch_command
+from bot.commands.twitch_logic import (
+    fetch_twitch_status_reply,
+    normalize_twitch_channel,
+    parse_twitch_command,
+)
 from bot.config import BotConfig, TwitchConfig
 from bot.tasks.twitch_logic import (
     TwitchClient,
@@ -182,6 +186,61 @@ class TestTwitchLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("CS2 Major", reply)
         self.assertIn("tarik", reply)
         self.assertIn("Offline", reply)
+
+    def test_normalize_twitch_channel(self) -> None:
+        self.assertEqual(normalize_twitch_channel("Shroud"), "shroud")
+        self.assertEqual(normalize_twitch_channel("@shroud"), "shroud")
+        self.assertEqual(normalize_twitch_channel("https://www.twitch.tv/Shroud/"), "shroud")
+        self.assertEqual(normalize_twitch_channel("  shroud extra  "), "shroud")
+
+    async def test_fetch_twitch_status_reply_single_channel_live(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=())
+        mock_client = MagicMock(spec=TwitchClient)
+        mock_client.get_user_ids.return_value = {"shroud": "1001"}
+        mock_client.get_stream_info.return_value = {
+            "user_name": "shroud",
+            "title": "CS2 <Major> & Chill",
+            "game_name": "Counter-Strike 2",
+            "viewer_count": 12345,
+        }
+
+        reply = await fetch_twitch_status_reply(cfg, client=mock_client, channel_name="@Shroud")
+
+        mock_client.get_user_ids.assert_called_once_with(("shroud",))
+        self.assertIn("shroud", reply)
+        self.assertIn("LIVE", reply)
+        self.assertIn("CS2 &lt;Major&gt; &amp; Chill", reply)
+        self.assertIn("Counter-Strike 2", reply)
+        self.assertIn("12,345", reply)
+        self.assertIn("https://twitch.tv/shroud", reply)
+        self.assertNotIn("Seurattavat Twitch-kanavat", reply)
+
+    async def test_fetch_twitch_status_reply_single_channel_offline(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("tarik",))
+        mock_client = MagicMock(spec=TwitchClient)
+        mock_client.get_user_ids.return_value = {"shroud": "1001"}
+        mock_client.get_stream_info.return_value = None
+
+        reply = await fetch_twitch_status_reply(cfg, client=mock_client, channel_name="shroud")
+
+        self.assertIn("shroud", reply)
+        self.assertIn("Offline", reply)
+        self.assertIn("https://twitch.tv/shroud", reply)
+
+    async def test_fetch_twitch_status_reply_single_channel_not_found(self) -> None:
+        cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=())
+        mock_client = MagicMock(spec=TwitchClient)
+        mock_client.get_user_ids.return_value = {}
+
+        reply = await fetch_twitch_status_reply(cfg, client=mock_client, channel_name="nonexistent_user")
+
+        self.assertIn("nonexistent_user", reply)
+        self.assertIn("Ei löydy Twitchistä", reply)
+
+    async def test_fetch_twitch_status_reply_single_channel_unconfigured(self) -> None:
+        cfg = TwitchConfig()
+        reply = await fetch_twitch_status_reply(cfg, channel_name="shroud")
+        self.assertIn("ei ole määritetty", reply)
 
     async def test_offline_detection_triggers_summary_callback(self) -> None:
         cfg = TwitchConfig(client_id="cid", client_secret="csecret", channels=("shroud",))
