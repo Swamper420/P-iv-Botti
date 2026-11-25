@@ -10,9 +10,11 @@ from bot.config import BotConfig, Cs2RssConfig, NaamaConfig, WeatherConfig
 class _DummyApplication:
     def __init__(self) -> None:
         self.handlers: list[MessageHandler] = []
+        self.handler_groups: list[int] = []
 
-    def add_handler(self, handler: MessageHandler) -> None:
+    def add_handler(self, handler: MessageHandler, group: int = 0) -> None:
         self.handlers.append(handler)
+        self.handler_groups.append(group)
 
 
 class CommandRegistrationTests(unittest.TestCase):

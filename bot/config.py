@@ -275,6 +275,22 @@ class MaratonConfig:
 
 
 @dataclass(frozen=True)
+class NiiloConfig:
+    enabled: bool = True
+    person_name: str = "Niilo"
+    reference_dir: str = "storage/niilo"
+    model_name: str = "buffalo_s"
+    model_root: str = "storage/models/insightface"
+    det_size: int = 640
+    det_threshold: float = 0.5
+    similarity_threshold: float = 0.45
+    max_image_bytes: int = 10_000_000
+    max_video_bytes: int = 20_000_000
+    video_sample_interval_seconds: float = 1.0
+    max_video_frames: int = 30
+
+
+@dataclass(frozen=True)
 class BotConfig:
     telegram_bot_token: str
     storage_dir: Path
@@ -296,6 +312,7 @@ class BotConfig:
     mumble: MumbleConfig = MumbleConfig()
     rendering: RenderingConfig = RenderingConfig()
     maraton: MaratonConfig = MaratonConfig()
+    niilo: NiiloConfig = NiiloConfig()
 
 
 
@@ -1064,6 +1081,80 @@ class BotConfig:
             use_card=maraton_use_card,
         )
 
+        niilo_enabled = (
+            os.getenv("NIILO_ENABLED", "true").strip().lower() == "true"
+        )
+        niilo_person_name = os.getenv("NIILO_PERSON_NAME", "Niilo").strip()
+        if not niilo_person_name:
+            raise ValueError("NIILO_PERSON_NAME must not be empty")
+
+        niilo_reference_dir = os.getenv(
+            "NIILO_REFERENCE_DIR", str(storage_dir / "niilo")
+        ).strip()
+        if not niilo_reference_dir:
+            raise ValueError("NIILO_REFERENCE_DIR must not be empty")
+
+        niilo_model_name = os.getenv("NIILO_MODEL_NAME", "buffalo_s").strip()
+        if not niilo_model_name:
+            raise ValueError("NIILO_MODEL_NAME must not be empty")
+
+        niilo_model_root = os.getenv(
+            "NIILO_MODEL_ROOT", str(storage_dir / "models" / "insightface")
+        ).strip()
+        if not niilo_model_root:
+            raise ValueError("NIILO_MODEL_ROOT must not be empty")
+
+        niilo_det_size = int(os.getenv("NIILO_DET_SIZE", "640"))
+        if not 128 <= niilo_det_size <= 2048:
+            raise ValueError("NIILO_DET_SIZE must be between 128 and 2048")
+
+        niilo_det_threshold = float(os.getenv("NIILO_DET_THRESHOLD", "0.5"))
+        if not 0.0 <= niilo_det_threshold <= 1.0:
+            raise ValueError("NIILO_DET_THRESHOLD must be between 0 and 1")
+
+        niilo_similarity_threshold = float(
+            os.getenv("NIILO_SIMILARITY_THRESHOLD", "0.45")
+        )
+        if not 0.0 <= niilo_similarity_threshold <= 1.0:
+            raise ValueError("NIILO_SIMILARITY_THRESHOLD must be between 0 and 1")
+
+        niilo_max_image_bytes = int(
+            os.getenv("NIILO_MAX_IMAGE_BYTES", "10000000")
+        )
+        if niilo_max_image_bytes < 1:
+            raise ValueError("NIILO_MAX_IMAGE_BYTES must be >= 1")
+
+        niilo_max_video_bytes = int(
+            os.getenv("NIILO_MAX_VIDEO_BYTES", "20000000")
+        )
+        if niilo_max_video_bytes < 1:
+            raise ValueError("NIILO_MAX_VIDEO_BYTES must be >= 1")
+
+        niilo_video_sample_interval_seconds = float(
+            os.getenv("NIILO_VIDEO_SAMPLE_INTERVAL_SECONDS", "1.0")
+        )
+        if niilo_video_sample_interval_seconds <= 0:
+            raise ValueError("NIILO_VIDEO_SAMPLE_INTERVAL_SECONDS must be > 0")
+
+        niilo_max_video_frames = int(os.getenv("NIILO_MAX_VIDEO_FRAMES", "30"))
+        if niilo_max_video_frames < 1:
+            raise ValueError("NIILO_MAX_VIDEO_FRAMES must be >= 1")
+
+        niilo_config = NiiloConfig(
+            enabled=niilo_enabled,
+            person_name=niilo_person_name,
+            reference_dir=niilo_reference_dir,
+            model_name=niilo_model_name,
+            model_root=niilo_model_root,
+            det_size=niilo_det_size,
+            det_threshold=niilo_det_threshold,
+            similarity_threshold=niilo_similarity_threshold,
+            max_image_bytes=niilo_max_image_bytes,
+            max_video_bytes=niilo_max_video_bytes,
+            video_sample_interval_seconds=niilo_video_sample_interval_seconds,
+            max_video_frames=niilo_max_video_frames,
+        )
+
         return cls(
             telegram_bot_token=token,
             storage_dir=storage_dir,
@@ -1085,6 +1176,7 @@ class BotConfig:
             mumble=mumble_config,
             rendering=rendering_config,
             maraton=maraton_config,
+            niilo=niilo_config,
         )
 
 

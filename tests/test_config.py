@@ -303,6 +303,77 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(ValueError, msg=f"Expected ValueError for {extra_env}"):
                         BotConfig.from_environment()
 
+    def test_niilo_default_config(self) -> None:
+        env = {"TELEGRAM_BOT_TOKEN": "token"}
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertTrue(config.niilo.enabled)
+        self.assertEqual(config.niilo.person_name, "Niilo")
+        self.assertTrue(config.niilo.reference_dir.endswith("niilo"))
+        self.assertEqual(config.niilo.model_name, "buffalo_s")
+        self.assertEqual(config.niilo.det_size, 640)
+        self.assertAlmostEqual(config.niilo.det_threshold, 0.5)
+        self.assertAlmostEqual(config.niilo.similarity_threshold, 0.45)
+        self.assertEqual(config.niilo.max_image_bytes, 10_000_000)
+        self.assertEqual(config.niilo.max_video_bytes, 20_000_000)
+        self.assertAlmostEqual(config.niilo.video_sample_interval_seconds, 1.0)
+        self.assertEqual(config.niilo.max_video_frames, 30)
+
+    def test_niilo_custom_config(self) -> None:
+        env = {
+            "TELEGRAM_BOT_TOKEN": "token",
+            "NIILO_ENABLED": "false",
+            "NIILO_PERSON_NAME": "Pekka",
+            "NIILO_REFERENCE_DIR": "/tmp/custom_niilo",
+            "NIILO_MODEL_NAME": "buffalo_l",
+            "NIILO_MODEL_ROOT": "/tmp/insightface",
+            "NIILO_DET_SIZE": "320",
+            "NIILO_DET_THRESHOLD": "0.6",
+            "NIILO_SIMILARITY_THRESHOLD": "0.52",
+            "NIILO_MAX_IMAGE_BYTES": "5000000",
+            "NIILO_MAX_VIDEO_BYTES": "15000000",
+            "NIILO_VIDEO_SAMPLE_INTERVAL_SECONDS": "0.5",
+            "NIILO_MAX_VIDEO_FRAMES": "15",
+        }
+        with patch("bot.config._load_env_file"):
+            with patch.dict(os.environ, env, clear=True):
+                config = BotConfig.from_environment()
+
+        self.assertFalse(config.niilo.enabled)
+        self.assertEqual(config.niilo.person_name, "Pekka")
+        self.assertEqual(config.niilo.reference_dir, "/tmp/custom_niilo")
+        self.assertEqual(config.niilo.model_name, "buffalo_l")
+        self.assertEqual(config.niilo.model_root, "/tmp/insightface")
+        self.assertEqual(config.niilo.det_size, 320)
+        self.assertAlmostEqual(config.niilo.det_threshold, 0.6)
+        self.assertAlmostEqual(config.niilo.similarity_threshold, 0.52)
+        self.assertEqual(config.niilo.max_image_bytes, 5_000_000)
+        self.assertEqual(config.niilo.max_video_bytes, 15_000_000)
+        self.assertAlmostEqual(config.niilo.video_sample_interval_seconds, 0.5)
+        self.assertEqual(config.niilo.max_video_frames, 15)
+
+    def test_invalid_niilo_config_raises_error(self) -> None:
+        invalid_cases = [
+            {"NIILO_PERSON_NAME": "   "},
+            {"NIILO_REFERENCE_DIR": ""},
+            {"NIILO_MODEL_NAME": ""},
+            {"NIILO_DET_SIZE": "64"},
+            {"NIILO_DET_THRESHOLD": "1.5"},
+            {"NIILO_SIMILARITY_THRESHOLD": "-0.1"},
+            {"NIILO_MAX_IMAGE_BYTES": "0"},
+            {"NIILO_MAX_VIDEO_BYTES": "0"},
+            {"NIILO_VIDEO_SAMPLE_INTERVAL_SECONDS": "0"},
+            {"NIILO_MAX_VIDEO_FRAMES": "0"},
+        ]
+        for extra_env in invalid_cases:
+            env = {"TELEGRAM_BOT_TOKEN": "token", **extra_env}
+            with patch("bot.config._load_env_file"):
+                with patch.dict(os.environ, env, clear=True):
+                    with self.assertRaises(ValueError, msg=f"Expected ValueError for {extra_env}"):
+                        BotConfig.from_environment()
+
 
 if __name__ == "__main__":
     unittest.main()

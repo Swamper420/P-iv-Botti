@@ -212,4 +212,8 @@ __marimo__/
 # Storage data files
 storage/*.json
 !storage/.gitkeep
+storage/niilo/*
+!storage/niilo/.gitkeep
+!storage/niilo/README.md
+storage/models/insightface/
 

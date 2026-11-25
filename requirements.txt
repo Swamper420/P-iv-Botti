@@ -4,6 +4,9 @@ Pillow
 ultralytics
 rapidfuzz
 pymumble
+insightface
+onnxruntime
+opencv-python-headless
 
 
 

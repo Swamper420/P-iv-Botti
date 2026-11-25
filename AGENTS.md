@@ -27,6 +27,7 @@ When extending this project:
   - `maraton.py` + `maraton_logic.py`
   - `muistuta.py` + `muistuta_logic.py`
   - `naama.py` + `naama_logic.py`
+  - `niilo.py` + `niilo_logic.py`
   - `paranna.py` + `paranna_logic.py`
   - `mine.py` + `mine_logic.py`
   - `meme.py` + `meme_logic.py`
@@ -57,7 +58,7 @@ When extending this project:
 - Type protocols live in `bot/protocols.py` (`CommandModule`, `TaskModule`).
 - JSON storage abstraction lives in `bot/storage.py` (`load_json_data`, `save_json_data`).
 - Message handlers use `filters.Regex` (avoid broad text filters that can block later handlers).
-- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `EyesConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig` with `vision_*`/`direct_prompt`, `MemeConfig` with `vision_*`, `direct_prompt`, caption word/char caps (`max_top_words`/`max_bottom_words`, `max_top_chars`/`max_bottom_chars`) and render fit tuning (`min_font_size`, `max_caption_fraction`), `CraftyConfig`, `MumbleConfig`, `RenderingConfig`, `MaratonConfig`).
+- Runtime configuration is provided by `BotConfig` in `bot/config.py` with domain sub-configs (`WeatherConfig`, `Cs2RssConfig`, `NaamaConfig`, `OllamaConfig`, `EyesConfig`, `TwitchConfig`, `ParannaConfig`, `TtsConfig`, `TelkkariConfig`, `SttConfig`, `ReminderConfig`, `TiivistaConfig` with `vision_*`/`direct_prompt`, `MemeConfig` with `vision_*`, `direct_prompt`, caption word/char caps (`max_top_words`/`max_bottom_words`, `max_top_chars`/`max_bottom_chars`) and render fit tuning (`min_font_size`, `max_caption_fraction`), `CraftyConfig`, `MumbleConfig`, `RenderingConfig`, `MaratonConfig`, `NiiloConfig`).
 
 - Active chat persistence is handled in `bot/active_chats.py` under `storage/active_chat_ids.json`.
 - Targeted tests: `python -m unittest tests.test_weather_logic` (replace module with the area you changed).
