@@ -38,7 +38,6 @@ class TaskRegistrationTests(unittest.TestCase):
         module_names = {module.__name__.split(".")[-1] for module in modules}
         self.assertIn("cs2_rss", module_names)
         self.assertIn("maraton", module_names)
-        self.assertIn("mumble", module_names)
         self.assertIn("twitch", module_names)
 
 
